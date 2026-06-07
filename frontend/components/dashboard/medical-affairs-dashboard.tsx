@@ -1501,6 +1501,9 @@ function OverviewScreen({
   pipelineData,
   analysisRunning,
   analysisError,
+  parseRefreshRunning,
+  parseRefreshError,
+  onRefreshParsedData,
   onRunAgenticAnalysis,
 }: {
   activeProtocol: DashboardProtocol;
@@ -1508,9 +1511,13 @@ function OverviewScreen({
   pipelineData: DashboardPipelineData;
   analysisRunning: boolean;
   analysisError: string;
+  parseRefreshRunning: boolean;
+  parseRefreshError: string;
+  onRefreshParsedData: () => void;
   onRunAgenticAnalysis: () => void;
 }) {
-  const visibleAnalysisError = analysisError || pipelineData.analysisError || '';
+  const visibleAnalysisError =
+    parseRefreshError || analysisError || pipelineData.analysisError || '';
 
   return (
     <div className="page">
@@ -1520,14 +1527,14 @@ function OverviewScreen({
         desc={`Protocol-aware processing for ${activeProtocol.id}. Current status: ${activeProtocol.status}.`}
         actions={
           <>
-            <ActionButton>
+            <ActionButton onClick={onRefreshParsedData} disabled={parseRefreshRunning}>
               <RefreshCw size={14} />
-              Re-run
+              {parseRefreshRunning ? 'Pulling parse' : 'Pull Unsiloed result'}
             </ActionButton>
             <ActionButton
               variant="primary"
               onClick={onRunAgenticAnalysis}
-              disabled={analysisRunning}
+              disabled={analysisRunning || parseRefreshRunning}
             >
               {analysisRunning ? <RefreshCw size={14} /> : <Target size={14} />}
               {analysisRunning ? 'Running analysis' : 'Run Agentic Analysis'}
@@ -2583,6 +2590,8 @@ export function MedicalAffairsDashboard({
   const [uploadOpen, setUploadOpen] = useState(initialUploadOpen);
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
+  const [parseRefreshRunning, setParseRefreshRunning] = useState(false);
+  const [parseRefreshError, setParseRefreshError] = useState('');
   const activeProtocol = useMemo(
     () =>
       dashboardProtocols.find((protocol) => protocol.id === protocolId) ??
@@ -2637,6 +2646,7 @@ export function MedicalAffairsDashboard({
 
     setAnalysisRunning(true);
     setAnalysisError('');
+    setParseRefreshError('');
     try {
       const response = await fetch(
         `/api/protocols/${encodeURIComponent(activeProtocol.id)}/agentic-analysis`,
@@ -2659,6 +2669,59 @@ export function MedicalAffairsDashboard({
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : 'Agentic analysis failed.');
       setAnalysisRunning(false);
+    }
+  };
+  const refreshParsedData = async () => {
+    if (!activeProtocol) {
+      return;
+    }
+
+    const postRefresh = async (jobId?: string) => {
+      const response = await fetch(
+        `/api/protocols/${encodeURIComponent(activeProtocol.id)}/unsiloed-parse`,
+        {
+          method: 'POST',
+          headers: jobId ? { 'Content-Type': 'application/json' } : undefined,
+          body: jobId ? JSON.stringify({ jobId }) : undefined,
+        }
+      );
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+        protocol?: { protocolCode?: string };
+        requiresJobId?: boolean;
+      } | null;
+
+      return { response, payload };
+    };
+
+    setParseRefreshRunning(true);
+    setParseRefreshError('');
+    setAnalysisError('');
+    try {
+      let { response, payload } = await postRefresh();
+
+      if (!response.ok && payload?.requiresJobId) {
+        const jobId = window.prompt('Paste the existing Unsiloed parse job id');
+        if (!jobId?.trim()) {
+          throw new Error(payload.error ?? 'Existing Unsiloed job id is required.');
+        }
+        ({ response, payload } = await postRefresh(jobId.trim()));
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? `Unsiloed parse refresh failed with ${response.status}`);
+      }
+
+      window.location.assign(
+        `/dashboard?screen=overview&protocol=${encodeURIComponent(
+          payload?.protocol?.protocolCode ?? activeProtocol.id
+        )}`
+      );
+    } catch (error) {
+      setParseRefreshError(
+        error instanceof Error ? error.message : 'Unsiloed parse refresh failed.'
+      );
+      setParseRefreshRunning(false);
     }
   };
   const isLibrary = screen === 'protocols' || screen === 'runs';
@@ -2714,6 +2777,9 @@ export function MedicalAffairsDashboard({
             pipelineData={activePipelineData}
             analysisRunning={analysisRunning}
             analysisError={analysisError}
+            parseRefreshRunning={parseRefreshRunning}
+            parseRefreshError={parseRefreshError}
+            onRefreshParsedData={refreshParsedData}
             onRunAgenticAnalysis={runAgenticAnalysis}
           />
         );
