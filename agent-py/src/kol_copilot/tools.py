@@ -6,6 +6,7 @@ from typing import Any
 
 from moss import MossClient, QueryOptions
 
+from .pipeline_store import load_agentic_analysis
 from .schemas import (
     Citation,
     ComplianceNote,
@@ -129,6 +130,11 @@ SEED_EXPERTS: list[dict[str, Any]] = [
 
 
 def default_protocol_profile(protocol_id: str | None = None) -> ProtocolProfile:
+    if protocol_id:
+        analysis = load_agentic_analysis(protocol_id)
+        if analysis:
+            return analysis.protocol
+
     profile = ProtocolProfile()
     if protocol_id:
         profile.protocol_id = protocol_id
@@ -268,6 +274,8 @@ async def retrieve_and_rank_kols(
     protocol = context.protocol_profile
     if docs:
         candidates = [_candidate_from_moss_doc(doc, protocol) for doc in docs]
+    elif analysis := load_agentic_analysis(context.protocol_id):
+        candidates = analysis.top_kols
     else:
         candidates = [_candidate_from_seed(entry, protocol) for entry in SEED_EXPERTS]
 

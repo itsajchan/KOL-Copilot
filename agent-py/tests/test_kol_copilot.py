@@ -1,6 +1,9 @@
 import pytest
 
+from kol_copilot.analysis import run_agentic_analysis
+from kol_copilot.pipeline_store import load_agentic_analysis
 from kol_copilot.runner import run_kol_query, voice_summary
+from kol_copilot.schemas import ProtocolProfile
 from kol_copilot.tools import scan_compliance
 
 
@@ -42,6 +45,31 @@ def test_compliance_scan_blocks_promotional_targeting() -> None:
     )
 
     assert notes[0].severity == "block"
+
+
+@pytest.mark.asyncio
+async def test_agentic_analysis_marks_local_fallback(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("KOL_COPILOT_ALLOW_FALLBACK_ANALYSIS", raising=False)
+    monkeypatch.setenv("KOL_COPILOT_ANALYSIS_DIR", str(tmp_path))
+
+    profile = ProtocolProfile()
+    result = await run_agentic_analysis(
+        protocol=profile,
+        query="Run agentic analysis for this protocol.",
+        user_id="user_test",
+    )
+
+    assert result.analysis_source == "local_fallback"
+    assert result.is_fallback is True
+    assert result.fallback_reason == "OPENAI_API_KEY was not set."
+    assert result.top_kols
+
+    (tmp_path / f"{profile.protocol_id}.json").write_text(result.model_dump_json())
+    assert load_agentic_analysis(profile.protocol_id) is None
+
+    monkeypatch.setenv("KOL_COPILOT_ALLOW_FALLBACK_ANALYSIS", "1")
+    assert load_agentic_analysis(profile.protocol_id) is not None
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,7 @@ MEMORY_INDEX = os.getenv("MOSS_MEMORY_INDEX_NAME", "memory")
 # running `uv run src/agent.py console`). The frontend provides a real
 # per-browser user_id via agent dispatch metadata.
 DEFAULT_USER_ID = "user_1"
+DEFAULT_PROTOCOL_ID = "nct04816669-bnt162b2"
 MOSS_NOT_CONFIGURED_MESSAGE = (
     "Moss is not configured yet. Add MOSS_PROJECT_ID and MOSS_PROJECT_KEY "
     "to agent-py/.env.local to enable knowledge search and memory."
@@ -46,7 +47,13 @@ MOSS_NOT_CONFIGURED_MESSAGE = (
 class Assistant(Agent):
     """Voice agent that wires Moss retrieval + per-user memory into LiveKit."""
 
-    def __init__(self, *, room=None, user_id: str = DEFAULT_USER_ID) -> None:
+    def __init__(
+        self,
+        *,
+        room=None,
+        user_id: str = DEFAULT_USER_ID,
+        protocol_id: str = DEFAULT_PROTOCOL_ID,
+    ) -> None:
         super().__init__(
             # The LLM (the agent's brain) runs on LiveKit Inference — no
             # provider API key required. STT/TTS are configured on the
@@ -158,6 +165,7 @@ class Assistant(Agent):
         )
         self._room = room
         self._user_id = user_id
+        self._protocol_id = protocol_id
         moss_project_id = os.getenv("MOSS_PROJECT_ID")
         moss_project_key = os.getenv("MOSS_PROJECT_KEY")
         if moss_project_id and moss_project_key:
@@ -262,8 +270,8 @@ class Assistant(Agent):
         result = await run_kol_query(
             query,
             user_id=self._user_id,
-            protocol_id="nct04816669-bnt162b2",
-            conversation_id=f"{self._user_id}:nct04816669-bnt162b2",
+            protocol_id=self._protocol_id,
+            conversation_id=f"{self._user_id}:{self._protocol_id}",
         )
         await self._publish_kol_result(result)
         return voice_summary(result)
@@ -379,10 +387,12 @@ async def my_agent(ctx: JobContext):
     # back to DEFAULT_USER_ID. Parsed before ctx.connect() to stay off the
     # connection critical path.
     user_id = DEFAULT_USER_ID
+    protocol_id = DEFAULT_PROTOCOL_ID
     if ctx.job.metadata:
         try:
             meta = json.loads(ctx.job.metadata)
             user_id = meta.get("user_id", DEFAULT_USER_ID)
+            protocol_id = meta.get("protocol_id", DEFAULT_PROTOCOL_ID)
         except json.JSONDecodeError:
             logger.warning("ctx.job.metadata was not valid JSON; using default user_id")
 
@@ -407,7 +417,7 @@ async def my_agent(ctx: JobContext):
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(room=ctx.room, user_id=user_id),
+        agent=Assistant(room=ctx.room, user_id=user_id, protocol_id=protocol_id),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(

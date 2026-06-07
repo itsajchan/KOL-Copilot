@@ -4,6 +4,7 @@ import os
 
 from agents import Agent, RunContextWrapper, function_tool
 
+from .pipeline_store import load_agentic_analysis
 from .schemas import KolAgentContext, KolQueryResult
 from .tools import build_msl_brief, retrieve_and_rank_kols, scan_compliance
 
@@ -15,6 +16,25 @@ async def get_protocol_profile(
     """Return the structured protocol attributes currently in scope."""
 
     return context.context.protocol_profile.model_dump()
+
+
+@function_tool
+async def get_agentic_analysis_assets(
+    context: RunContextWrapper[KolAgentContext],
+) -> dict:
+    """Return stored protocol, evidence, KOL, ranking, and brief assets if available."""
+
+    analysis = load_agentic_analysis(context.context.protocol_id)
+    if not analysis:
+        return {
+            "available": False,
+            "message": "No stored agentic analysis snapshot is available for this protocol.",
+        }
+
+    return {
+        "available": True,
+        "analysis": analysis.model_dump(mode="json"),
+    }
 
 
 @function_tool
@@ -80,6 +100,9 @@ def build_kol_copilot_agent() -> Agent[KolAgentContext]:
             "Use the protocol profile as the job description and the evidence "
             "tools as the talent pool. Identify, rank, compare, and brief KOLs "
             "using evidence only. Every recommendation must be citation-backed. "
+            "Call get_agentic_analysis_assets first when the user asks about "
+            "a completed dashboard pipeline, protocol PDF, KOL shortlist, "
+            "ranking rationale, evidence source, or MSL brief. "
             "Never use prescribing volume, sales potential, commercial adoption, "
             "or pre-approval promotional targeting as a rationale. If the user "
             "asks for an MSL brief, include scientific background, relevance "
@@ -89,6 +112,7 @@ def build_kol_copilot_agent() -> Agent[KolAgentContext]:
         ),
         tools=[
             get_protocol_profile,
+            get_agentic_analysis_assets,
             retrieve_ranked_kols,
             check_medical_affairs_compliance,
             draft_msl_pre_call_brief,

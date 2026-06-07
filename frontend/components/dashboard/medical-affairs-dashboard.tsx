@@ -81,6 +81,116 @@ export type DashboardProtocol = {
   stages: Stage[];
 };
 
+export type DashboardStatusCard = {
+  key: string;
+  label: string;
+  value: string;
+  sub: string;
+  tone: Tone;
+  icon: IconName;
+  screen: ScreenKey;
+};
+
+export type DashboardBriefRow = {
+  section: string;
+  value: string;
+  confidence: number;
+  chunk: string;
+  status: string;
+};
+
+export type DashboardQueryGroup = {
+  name: string;
+  status: string;
+  results: number | null;
+  sources: string;
+  queries: string[];
+};
+
+export type DashboardEvidenceItem = {
+  id: string;
+  type: string;
+  title: string;
+  host: string;
+  date: string;
+  score: number;
+  strength: string;
+  snippet: string;
+  kols: string[];
+};
+
+export type DashboardCandidate = {
+  id: string;
+  rank: number;
+  name: string;
+  institution: string;
+  specialty: string;
+  geo: string;
+  score: number;
+  sources: number;
+  flags: number;
+  status: string;
+  rationale: string;
+  dimensions: number[];
+};
+
+export type DashboardRankingDimension = {
+  label: string;
+  weight: string;
+};
+
+export type DashboardGuardrail = {
+  label: string;
+  ok: boolean;
+};
+
+export type DashboardComplianceFlag = {
+  severity: string;
+  kol: string;
+  type: string;
+  detail: string;
+  status: string;
+};
+
+export type DashboardMossAsset = {
+  label: string;
+  chunks: number;
+  embedded: number;
+  failed: number;
+  state: State;
+};
+
+export type DashboardExportItem = {
+  fmt: string;
+  label: string;
+  desc: string;
+};
+
+export type DashboardVoiceQa = {
+  q: string;
+  a: string;
+  chips: string[];
+};
+
+export type DashboardPipelineData = {
+  isReady: boolean;
+  analysisSource?: string | null;
+  isFallback?: boolean;
+  fallbackReason?: string | null;
+  analysisError?: string | null;
+  statusCards: DashboardStatusCard[];
+  brief: DashboardBriefRow[];
+  queryGroups: DashboardQueryGroup[];
+  evidence: DashboardEvidenceItem[];
+  candidates: DashboardCandidate[];
+  rankingDimensions: DashboardRankingDimension[];
+  guardrails: DashboardGuardrail[];
+  complianceFlags: DashboardComplianceFlag[];
+  mossAssets: DashboardMossAsset[];
+  exports: DashboardExportItem[];
+  voiceQa: DashboardVoiceQa[];
+};
+
 type UploadCompleteResult = {
   protocol: {
     id: string;
@@ -148,16 +258,16 @@ const navGroups: Array<{
       { key: 'overview', label: 'Run overview', icon: 'dashboard' },
       { key: 'brief', label: 'Protocol brief', icon: 'brief' },
       { key: 'queries', label: 'Search queries', icon: 'queries' },
-      { key: 'evidence', label: 'Evidence', icon: 'evidence', count: '148' },
-      { key: 'candidates', label: 'KOL candidates', icon: 'candidates', count: '64' },
+      { key: 'evidence', label: 'Evidence', icon: 'evidence' },
+      { key: 'candidates', label: 'KOL candidates', icon: 'candidates' },
       { key: 'ranking', label: 'Ranking', icon: 'sliders' },
     ],
   },
   {
     group: 'Governance',
     items: [
-      { key: 'compliance', label: 'Compliance review', icon: 'shield', count: '2', tone: 'risk' },
-      { key: 'moss', label: 'Moss index', icon: 'moss', count: '97%', tone: 'compliance' },
+      { key: 'compliance', label: 'Compliance review', icon: 'shield', tone: 'risk' },
+      { key: 'moss', label: 'Moss index', icon: 'moss', tone: 'compliance' },
       { key: 'summary', label: 'Summary / export', icon: 'summary' },
     ],
   },
@@ -660,6 +770,43 @@ const voiceQa = [
   },
 ];
 
+const demoPipelineData: DashboardPipelineData = {
+  isReady: true,
+  analysisSource: 'demo_fixture',
+  isFallback: false,
+  fallbackReason: null,
+  analysisError: null,
+  statusCards,
+  brief,
+  queryGroups,
+  evidence,
+  candidates,
+  rankingDimensions,
+  guardrails,
+  complianceFlags,
+  mossAssets,
+  exports,
+  voiceQa,
+};
+
+function navCount(screen: ScreenKey, pipelineData: DashboardPipelineData) {
+  switch (screen) {
+    case 'evidence':
+      return `${pipelineData.evidence.length}`;
+    case 'candidates':
+      return `${pipelineData.candidates.length}`;
+    case 'compliance':
+      return `${pipelineData.complianceFlags.filter((flag) => flag.status !== 'resolved').length}`;
+    case 'moss': {
+      const total = pipelineData.mossAssets.reduce((sum, asset) => sum + asset.chunks, 0);
+      const embedded = pipelineData.mossAssets.reduce((sum, asset) => sum + asset.embedded, 0);
+      return total ? `${Math.round((embedded / total) * 100)}%` : '0';
+    }
+    default:
+      return null;
+  }
+}
+
 function IconToken({ name, size = 16 }: { name: IconName; size?: number }) {
   const Icon = ICONS[name];
   return <Icon size={size} aria-hidden="true" />;
@@ -679,13 +826,20 @@ function ActionButton({
   children,
   variant = 'secondary',
   onClick,
+  disabled = false,
 }: {
   children: ReactNode;
   variant?: 'primary' | 'secondary';
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <button type="button" className={`action action--${variant}`} onClick={onClick}>
+    <button
+      type="button"
+      className={`action action--${variant}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   );
@@ -1314,10 +1468,20 @@ function StageRail({ stages }: { stages: Stage[] }) {
 function OverviewScreen({
   activeProtocol,
   go,
+  pipelineData,
+  analysisRunning,
+  analysisError,
+  onRunAgenticAnalysis,
 }: {
   activeProtocol: DashboardProtocol;
   go: (screen: ScreenKey) => void;
+  pipelineData: DashboardPipelineData;
+  analysisRunning: boolean;
+  analysisError: string;
+  onRunAgenticAnalysis: () => void;
 }) {
+  const visibleAnalysisError = analysisError || pipelineData.analysisError || '';
+
   return (
     <div className="page">
       <ScreenHead
@@ -1330,19 +1494,38 @@ function OverviewScreen({
               <RefreshCw size={14} />
               Re-run
             </ActionButton>
-            <Link href="/dashboard?screen=protocols&upload=1" className="action action--secondary">
-              <Upload size={14} />
-              Upload protocol
-            </Link>
-            <ActionButton variant="primary" onClick={() => go('summary')}>
+            <ActionButton
+              variant="primary"
+              onClick={onRunAgenticAnalysis}
+              disabled={analysisRunning}
+            >
+              {analysisRunning ? <RefreshCw size={14} /> : <Target size={14} />}
+              {analysisRunning ? 'Running analysis' : 'Run Agentic Analysis'}
+            </ActionButton>
+            <ActionButton onClick={() => go('summary')}>
               <Download size={14} />
               Export summary
             </ActionButton>
           </>
         }
       />
+      {visibleAnalysisError ? (
+        <div className="stack stack--tight">
+          <Note tone="risk" icon="alert">
+            {visibleAnalysisError}
+          </Note>
+        </div>
+      ) : null}
+      {pipelineData.isFallback ? (
+        <div className="stack stack--tight">
+          <Note tone="compliance" icon="alert">
+            Demo fallback data is visible because fallback analysis mode is enabled. These KOLs
+            are not presented as researched OpenAI Agents SDK output.
+          </Note>
+        </div>
+      ) : null}
       <div className="statgrid">
-        {statusCards.map((card) => (
+        {pipelineData.statusCards.map((card) => (
           <button key={card.key} type="button" className="stat" onClick={() => go(card.screen)}>
             <span className={`stat__ic stat__ic--${card.tone}`}>
               <IconToken name={card.icon} />
@@ -1404,7 +1587,7 @@ function OverviewScreen({
             </div>
           </Panel>
           <Panel eyebrow="Governance" title="Active guardrails">
-            <GuardrailList />
+            <GuardrailList guardrails={pipelineData.guardrails} />
           </Panel>
         </div>
       </div>
@@ -1413,28 +1596,35 @@ function OverviewScreen({
         title="Top protocol-matched KOLs"
         actions={<ActionButton onClick={() => go('ranking')}>Open ranking</ActionButton>}
       >
-        <div className="kolgrid">
-          {candidates.slice(0, 3).map((candidate) => (
-            <article key={candidate.id} className="kolcard">
-              <div className="kolcard__top">
-                <span className="rank">0{candidate.rank}</span>
-                <div>
-                  <h3>{candidate.name}</h3>
-                  <p>{candidate.institution}</p>
+        {pipelineData.candidates.length ? (
+          <div className="kolgrid">
+            {pipelineData.candidates.slice(0, 3).map((candidate) => (
+              <article key={candidate.id} className="kolcard">
+                <div className="kolcard__top">
+                  <span className="rank">0{candidate.rank}</span>
+                  <div>
+                    <h3>{candidate.name}</h3>
+                    <p>{candidate.institution}</p>
+                  </div>
+                  <strong>{candidate.score}</strong>
                 </div>
-                <strong>{candidate.score}</strong>
-              </div>
-              <div className="tagrow">
-                <span className="tag">{candidate.specialty}</span>
-                <span className="tag">{candidate.geo}</span>
-                <Badge tone={candidate.status === 'validated' ? 'safe' : 'compliance'}>
-                  {candidate.status}
-                </Badge>
-              </div>
-              <p>{candidate.rationale}</p>
-            </article>
-          ))}
-        </div>
+                <div className="tagrow">
+                  <span className="tag">{candidate.specialty}</span>
+                  <span className="tag">{candidate.geo}</span>
+                  <Badge tone={candidate.status === 'validated' ? 'safe' : 'compliance'}>
+                    {candidate.status}
+                  </Badge>
+                </div>
+                <p>{candidate.rationale}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <Note tone="risk" icon="alert">
+            {pipelineData.analysisError ??
+              'No researched KOL candidates are available yet. Run Agentic Analysis to store valid OpenAI Agents SDK results.'}
+          </Note>
+        )}
       </Panel>
     </div>
   );
@@ -1572,7 +1762,7 @@ function RunsScreen({ go }: { go: (screen: ScreenKey) => void }) {
   );
 }
 
-function BriefScreen() {
+function BriefScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page">
       <ScreenHead
@@ -1592,7 +1782,7 @@ function BriefScreen() {
             </tr>
           </thead>
           <tbody>
-            {brief.map((row) => (
+            {pipelineData.brief.map((row) => (
               <tr key={row.section}>
                 <td className="mono">{row.section}</td>
                 <td>{row.value}</td>
@@ -1622,7 +1812,7 @@ function BriefScreen() {
   );
 }
 
-function QueriesScreen() {
+function QueriesScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page">
       <ScreenHead
@@ -1631,7 +1821,7 @@ function QueriesScreen() {
         desc="Protocol-derived query groups for trial registries, publications, congress activity, guidelines, and expert bios."
       />
       <div className="querygrid">
-        {queryGroups.map((group) => (
+        {pipelineData.queryGroups.map((group) => (
           <Panel
             key={group.name}
             eyebrow={group.sources}
@@ -1665,7 +1855,7 @@ function QueriesScreen() {
   );
 }
 
-function EvidenceScreen() {
+function EvidenceScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page page--wide">
       <ScreenHead
@@ -1691,7 +1881,7 @@ function EvidenceScreen() {
               </tr>
             </thead>
             <tbody>
-              {evidence.map((item) => (
+              {pipelineData.evidence.map((item) => (
                 <tr key={item.id}>
                   <td>
                     <div className="mono accent-text">{item.type}</div>
@@ -1739,7 +1929,7 @@ function EvidenceScreen() {
   );
 }
 
-function CandidatesScreen() {
+function CandidatesScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page page--wide">
       <ScreenHead
@@ -1747,6 +1937,20 @@ function CandidatesScreen() {
         title="KOL candidates"
         desc="Candidate experts extracted from evidence snippets and normalized into Medical Affairs-ready profile rows."
       />
+      {pipelineData.isFallback ? (
+        <Note tone="compliance" icon="alert">
+          Demo fallback KOLs are visible because fallback analysis mode is enabled. These rows are
+          not presented as researched OpenAI Agents SDK output.
+        </Note>
+      ) : null}
+      {!pipelineData.candidates.length ? (
+        <Panel>
+          <Note tone="risk" icon="alert">
+            {pipelineData.analysisError ??
+              'No valid researched KOL candidates are stored for this protocol. Run Agentic Analysis after the OpenAI structured-output path is available.'}
+          </Note>
+        </Panel>
+      ) : (
       <Panel noBody>
         <table className="tbl">
           <thead>
@@ -1761,7 +1965,7 @@ function CandidatesScreen() {
             </tr>
           </thead>
           <tbody>
-            {candidates.map((candidate) => (
+            {pipelineData.candidates.map((candidate) => (
               <tr key={candidate.id}>
                 <td className="mono">#{candidate.rank}</td>
                 <td className="accent-text">{candidate.name}</td>
@@ -1779,11 +1983,12 @@ function CandidatesScreen() {
           </tbody>
         </table>
       </Panel>
+      )}
     </div>
   );
 }
 
-function RankingScreen() {
+function RankingScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page page--wide">
       <ScreenHead
@@ -1796,7 +2001,7 @@ function RankingScreen() {
           <thead>
             <tr>
               <th>KOL</th>
-              {rankingDimensions.map((dimension) => (
+              {pipelineData.rankingDimensions.map((dimension) => (
                 <th key={dimension.label}>
                   {dimension.label}
                   <span>{dimension.weight}</span>
@@ -1806,14 +2011,14 @@ function RankingScreen() {
             </tr>
           </thead>
           <tbody>
-            {candidates.map((candidate) => (
+            {pipelineData.candidates.map((candidate) => (
               <tr key={candidate.id}>
                 <td>
                   <strong>{candidate.name}</strong>
                   <p>{candidate.rationale}</p>
                 </td>
                 {candidate.dimensions.map((value, index) => (
-                  <td key={`${candidate.id}-${rankingDimensions[index].label}`}>
+                  <td key={`${candidate.id}-${pipelineData.rankingDimensions[index].label}`}>
                     <MiniBar value={value} max={index === 1 ? 25 : index === 4 ? 15 : 20} />
                   </td>
                 ))}
@@ -1827,7 +2032,7 @@ function RankingScreen() {
   );
 }
 
-function GuardrailList() {
+function GuardrailList({ guardrails }: { guardrails: DashboardGuardrail[] }) {
   return (
     <div className="guard-list">
       {guardrails.map((guardrail) => (
@@ -1843,7 +2048,7 @@ function GuardrailList() {
   );
 }
 
-function ComplianceScreen() {
+function ComplianceScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page">
       <ScreenHead
@@ -1853,11 +2058,11 @@ function ComplianceScreen() {
       />
       <div className="cols cols--2">
         <Panel eyebrow="Rules" title="Guardrail checks">
-          <GuardrailList />
+          <GuardrailList guardrails={pipelineData.guardrails} />
         </Panel>
         <Panel eyebrow="Open items" title="Reviewer flags">
           <div className="stack stack--tight">
-            {complianceFlags.map((flag) => (
+            {pipelineData.complianceFlags.map((flag) => (
               <article key={`${flag.kol}-${flag.type}`} className={`flag flag--${flag.severity}`}>
                 <div className="flag__top">
                   <Badge tone={flag.status === 'resolved' ? 'safe' : 'risk'}>{flag.status}</Badge>
@@ -1875,7 +2080,7 @@ function ComplianceScreen() {
   );
 }
 
-function MossScreen() {
+function MossScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page">
       <ScreenHead
@@ -1885,7 +2090,7 @@ function MossScreen() {
       />
       <Panel eyebrow="Embedding status" title="Assets">
         <div className="moss-list">
-          {mossAssets.map((asset) => {
+          {pipelineData.mossAssets.map((asset) => {
             const percent = Math.round((asset.embedded / asset.chunks) * 100);
             return (
               <div key={asset.label} className="moss-row">
@@ -1911,7 +2116,7 @@ function MossScreen() {
   );
 }
 
-function SummaryScreen() {
+function SummaryScreen({ pipelineData }: { pipelineData: DashboardPipelineData }) {
   return (
     <div className="page">
       <ScreenHead
@@ -1922,7 +2127,7 @@ function SummaryScreen() {
       <div className="cols cols--2">
         <Panel eyebrow="Exports" title="Available packets">
           <div className="export-list">
-            {exports.map((item) => (
+            {pipelineData.exports.map((item) => (
               <button key={item.fmt} type="button" className="export-card">
                 <span>{item.fmt}</span>
                 <div>
@@ -1984,13 +2189,16 @@ function StageGate({
 
 function VoicePanel({
   activeProtocol,
+  pipelineData,
   onClose,
 }: {
   activeProtocol: DashboardProtocol;
+  pipelineData: DashboardPipelineData;
   onClose: () => void;
 }) {
-  const [activeQuestion, setActiveQuestion] = useState(voiceQa[0].q);
-  const answer = voiceQa.find((item) => item.q === activeQuestion) ?? voiceQa[0];
+  const [activeQuestion, setActiveQuestion] = useState(pipelineData.voiceQa[0].q);
+  const answer =
+    pipelineData.voiceQa.find((item) => item.q === activeQuestion) ?? pipelineData.voiceQa[0];
 
   return (
     <aside className="voicepanel" aria-label="Voice copilot">
@@ -2019,7 +2227,7 @@ function VoicePanel({
       </div>
       <div className="voicepanel__body">
         <div className="suggestions">
-          {voiceQa.map((item) => (
+          {pipelineData.voiceQa.map((item) => (
             <button
               key={item.q}
               type="button"
@@ -2092,12 +2300,14 @@ export function MedicalAffairsDashboard({
   initialProtocolId,
   initialUploadOpen = false,
   protocols,
+  pipelineDataByProtocol,
   protocolLoadError = null,
 }: {
   initialScreen?: ScreenKey;
   initialProtocolId?: string;
   initialUploadOpen?: boolean;
   protocols?: DashboardProtocol[];
+  pipelineDataByProtocol?: Record<string, DashboardPipelineData>;
   protocolLoadError?: string | null;
 }) {
   const dashboardProtocols = protocols ?? demoProtocols;
@@ -2107,6 +2317,8 @@ export function MedicalAffairsDashboard({
   );
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(initialUploadOpen);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
   const activeProtocol = useMemo(
     () =>
       dashboardProtocols.find((protocol) => protocol.id === protocolId) ??
@@ -2114,6 +2326,11 @@ export function MedicalAffairsDashboard({
       null,
     [dashboardProtocols, protocolId]
   );
+  const activePipelineData =
+    (activeProtocol ? pipelineDataByProtocol?.[activeProtocol.id] : null) ??
+    (activeProtocol?.id === 'RSV-PreF-301'
+      ? demoPipelineData
+      : { ...demoPipelineData, isReady: false });
 
   useEffect(() => {
     if (!dashboardProtocols.length) {
@@ -2149,8 +2366,42 @@ export function MedicalAffairsDashboard({
     const selected = protocolId ? `&protocol=${encodeURIComponent(protocolId)}` : '';
     window.history.pushState(null, '', `/dashboard?screen=${nextScreen}${selected}`);
   };
+  const runAgenticAnalysis = async () => {
+    if (!activeProtocol) {
+      return;
+    }
+
+    setAnalysisRunning(true);
+    setAnalysisError('');
+    try {
+      const response = await fetch(
+        `/api/protocols/${encodeURIComponent(activeProtocol.id)}/agentic-analysis`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query:
+              'Run agentic Medical Affairs analysis for this protocol. Search exhaustively for qualified KOLs, produce evidence-backed ranking, and generate a compliant MSL pre-call brief.',
+          }),
+        }
+      );
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.error ?? `Agentic analysis failed with ${response.status}`);
+      }
+      window.location.assign(
+        `/dashboard?screen=overview&protocol=${encodeURIComponent(activeProtocol.id)}`
+      );
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'Agentic analysis failed.');
+      setAnalysisRunning(false);
+    }
+  };
   const isLibrary = screen === 'protocols' || screen === 'runs';
-  const isCompleteDemo = activeProtocol?.id === 'RSV-PreF-301';
+  const canShowPipelineScreen =
+    activeProtocol?.id === 'RSV-PreF-301' ||
+    activePipelineData.isReady ||
+    Boolean(activePipelineData.analysisError);
 
   function renderScreen() {
     if (screen === 'protocols') {
@@ -2170,29 +2421,38 @@ export function MedicalAffairsDashboard({
     if (!activeProtocol) {
       return <NoProtocolsScreen />;
     }
-    if (!isCompleteDemo && screen !== 'overview') {
+    if (!canShowPipelineScreen && screen !== 'overview') {
       return <StageGate activeProtocol={activeProtocol} go={go} />;
     }
     switch (screen) {
       case 'brief':
-        return <BriefScreen />;
+        return <BriefScreen pipelineData={activePipelineData} />;
       case 'queries':
-        return <QueriesScreen />;
+        return <QueriesScreen pipelineData={activePipelineData} />;
       case 'evidence':
-        return <EvidenceScreen />;
+        return <EvidenceScreen pipelineData={activePipelineData} />;
       case 'candidates':
-        return <CandidatesScreen />;
+        return <CandidatesScreen pipelineData={activePipelineData} />;
       case 'ranking':
-        return <RankingScreen />;
+        return <RankingScreen pipelineData={activePipelineData} />;
       case 'compliance':
-        return <ComplianceScreen />;
+        return <ComplianceScreen pipelineData={activePipelineData} />;
       case 'moss':
-        return <MossScreen />;
+        return <MossScreen pipelineData={activePipelineData} />;
       case 'summary':
-        return <SummaryScreen />;
+        return <SummaryScreen pipelineData={activePipelineData} />;
       case 'overview':
       default:
-        return <OverviewScreen activeProtocol={activeProtocol} go={go} />;
+        return (
+          <OverviewScreen
+            activeProtocol={activeProtocol}
+            go={go}
+            pipelineData={activePipelineData}
+            analysisRunning={analysisRunning}
+            analysisError={analysisError}
+            onRunAgenticAnalysis={runAgenticAnalysis}
+          />
+        );
     }
   }
 
@@ -2211,20 +2471,23 @@ export function MedicalAffairsDashboard({
             {navGroups.map((group) => (
               <div key={group.group} className="side__group">
                 <div className="side__label">{group.group}</div>
-                {group.items.map((item) => (
-                  <Link
-                    key={item.key}
-                    href={`/dashboard?screen=${item.key}`}
-                    className="navitem"
-                    aria-current={screen === item.key}
-                  >
-                    <IconToken name={item.icon} />
-                    <span>{item.label}</span>
-                    {item.count ? (
-                      <span className={`ct ct--${item.tone ?? 'neutral'}`}>{item.count}</span>
-                    ) : null}
-                  </Link>
-                ))}
+                {group.items.map((item) => {
+                  const count = item.count ?? navCount(item.key, activePipelineData);
+                  return (
+                    <Link
+                      key={item.key}
+                      href={`/dashboard?screen=${item.key}`}
+                      className="navitem"
+                      aria-current={screen === item.key}
+                    >
+                      <IconToken name={item.icon} />
+                      <span>{item.label}</span>
+                      {count ? (
+                        <span className={`ct ct--${item.tone ?? 'neutral'}`}>{count}</span>
+                      ) : null}
+                    </Link>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -2254,7 +2517,11 @@ export function MedicalAffairsDashboard({
 
         {voiceOpen ? (
           activeProtocol ? (
-            <VoicePanel activeProtocol={activeProtocol} onClose={() => setVoiceOpen(false)} />
+            <VoicePanel
+              activeProtocol={activeProtocol}
+              pipelineData={activePipelineData}
+              onClose={() => setVoiceOpen(false)}
+            />
           ) : null
         ) : null}
         {uploadOpen ? (

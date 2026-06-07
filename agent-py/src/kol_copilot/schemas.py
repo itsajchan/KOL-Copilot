@@ -100,6 +100,42 @@ class KolQueryResult(BaseModel):
     audit_trail: list[str] = Field(default_factory=list)
 
 
+class PipelineSearchQueryGroup(BaseModel):
+    name: str
+    source_targets: list[str] = Field(default_factory=list)
+    queries: list[str]
+    result_count: int | None = None
+    status: str = "approved"
+
+
+class PipelineEvidenceSnippet(BaseModel):
+    title: str
+    source: str
+    url: str
+    evidence_type: str
+    snippet: str
+    score: float = Field(default=75, ge=0, le=100)
+    strength: str = Field(default="moderate", description="weak, moderate, or strong")
+    linked_kols: list[str] = Field(default_factory=list)
+    published_at: str | None = None
+
+
+class AgenticAnalysisResult(BaseModel):
+    """Full pipeline payload produced by the agentic analysis job."""
+
+    answer: str
+    analysis_source: str = Field(default="openai_agents_sdk")
+    is_fallback: bool = False
+    fallback_reason: str | None = None
+    protocol: ProtocolProfile
+    search_query_groups: list[PipelineSearchQueryGroup]
+    evidence: list[PipelineEvidenceSnippet]
+    top_kols: list[KolCandidate]
+    compliance_notes: list[ComplianceNote]
+    msl_brief: MslBrief | None = None
+    audit_trail: list[str] = Field(default_factory=list)
+
+
 @dataclass(slots=True)
 class KolAgentContext:
     user_id: str

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { AccessToken, type AccessTokenOptions, type VideoGrant } from 'livekit-server-sdk';
 import { randomUUID } from 'node:crypto';
 import { RoomAgentDispatch, RoomConfiguration } from '@livekit/protocol';
+import { prisma } from '@/lib/prisma';
 
 type ConnectionDetails = {
   serverUrl: string;
@@ -22,6 +23,19 @@ const AGENT_NAME = process.env.AGENT_NAME;
 // dispatch metadata as `{ "user_id": <uuid> }` so the agent can scope its Moss memory per user.
 const USER_COOKIE = 'lk_moss_user';
 const USER_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year
+
+async function latestProtocolId() {
+  try {
+    const protocol = await prisma.protocol.findFirst({
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      select: { protocolCode: true },
+    });
+
+    return protocol?.protocolCode ?? 'nct04816669-bnt162b2';
+  } catch {
+    return 'nct04816669-bnt162b2';
+  }
+}
 
 // don't cache the results
 export const revalidate = 0;
@@ -53,7 +67,15 @@ export async function POST(req: Request) {
     }
 
     // Parse room config from request body.
-    const body = await req.json();
+    const url = new URL(req.url);
+    const body = await req.json().catch(() => ({}));
+    const requestedProtocol =
+      typeof body?.protocol_id === 'string'
+        ? body.protocol_id
+        : typeof body?.protocolId === 'string'
+          ? body.protocolId
+          : url.searchParams.get('protocol') || undefined;
+    const protocolId = requestedProtocol || (await latestProtocolId());
     const roomConfig = body?.room_config
       ? RoomConfiguration.fromJson(body.room_config, { ignoreUnknownFields: true })
       : new RoomConfiguration();
@@ -64,7 +86,7 @@ export async function POST(req: Request) {
     if (roomConfig.agents.length === 0) {
       roomConfig.agents.push(new RoomAgentDispatch({ agentName: AGENT_NAME ?? '' }));
     }
-    const dispatchMetadata = JSON.stringify({ user_id: userId });
+    const dispatchMetadata = JSON.stringify({ user_id: userId, protocol_id: protocolId });
     for (const agent of roomConfig.agents) {
       if (!agent.agentName && AGENT_NAME) {
         agent.agentName = AGENT_NAME;
