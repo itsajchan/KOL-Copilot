@@ -60,7 +60,7 @@ type Tone = 'accent' | 'evidence' | 'compliance' | 'risk' | 'safe' | 'neutral';
 type State = 'done' | 'warn' | 'active' | 'pending' | 'error';
 type IconName = keyof typeof ICONS;
 type DashboardIcon = typeof AlertTriangle;
-type UploadPhase = 'idle' | 'invalid' | 'uploading' | 'parsing' | 'ready';
+type UploadPhase = 'idle' | 'invalid' | 'uploading' | 'parsing' | 'ready' | 'error';
 type UploadProtocolFile = { name: string; sizeMB: number; ext: string };
 type Stage = { key: string; label: string; state: State; detail: string };
 
@@ -79,6 +79,30 @@ export type DashboardProtocol = {
   updated: string;
   active: boolean;
   stages: Stage[];
+};
+
+type UploadCompleteResult = {
+  protocol: {
+    id: string;
+    protocolCode: string;
+    title: string;
+    sponsor: string | null;
+    phase: string | null;
+    indication: string | null;
+  };
+  run: {
+    id: string;
+    runKey: string;
+  };
+  unsiloed: {
+    jobId: string;
+    totalChunks: number;
+    pageCount: number | null;
+  };
+  outputs: {
+    resultJsonPath: string;
+    outputMarkdownPath: string;
+  };
 };
 
 const ICONS = {
@@ -762,17 +786,13 @@ function StageDot({ state }: { state: State }) {
   );
 }
 
-const ACCEPTED_PROTOCOL_EXTENSIONS = ['pdf', 'docx', 'doc'];
-const MAX_PROTOCOL_MB = 50;
-const SAMPLE_PROTOCOL = {
-  name: 'RSV-PreF-301_Protocol_Amendment-4.pdf',
-  sizeMB: 4.2,
-};
+const ACCEPTED_PROTOCOL_EXTENSIONS = ['pdf'];
+const MAX_PROTOCOL_MB = 100;
 const PARSE_STEPS = [
-  { label: 'Parsing document structure', count: '312 chunks' },
-  { label: 'Extracting protocol brief', count: '12 sections' },
-  { label: 'Detecting endpoints & population', count: '2 endpoints' },
-  { label: 'Classifying specialties & themes', count: '4 specialties' },
+  { label: 'Uploading PDF to KOL Copilot', count: 'stored' },
+  { label: 'Submitting document to Unsiloed', count: 'job queued' },
+  { label: 'Polling parse job', count: 'structured chunks' },
+  { label: 'Writing chunks and artifacts', count: 'database + output files' },
 ];
 
 function formatUploadSize(sizeMB: number) {
@@ -782,20 +802,21 @@ function formatUploadSize(sizeMB: number) {
 function UploadProtocolModal({
   onClose,
   onComplete,
-  sampleProtocol,
 }: {
   onClose: () => void;
-  onComplete: () => void;
-  sampleProtocol: DashboardProtocol;
+  onComplete: (result: UploadCompleteResult) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const alive = useRef(true);
   const [phase, setPhase] = useState<UploadPhase>('idle');
   const [file, setFile] = useState<UploadProtocolFile | null>(null);
   const [drag, setDrag] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(0);
   const [stepIndex, setStepIndex] = useState(0);
+  const [uploadResult, setUploadResult] = useState<UploadCompleteResult | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -807,73 +828,112 @@ function UploadProtocolModal({
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
+      alive.current = false;
       window.removeEventListener('keydown', handleKeyDown);
       timers.current.forEach(clearTimeout);
+      if (progressTimer.current) {
+        clearInterval(progressTimer.current);
+      }
     };
   }, [onClose]);
+
+  const clearAsyncState = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    if (progressTimer.current) {
+      clearInterval(progressTimer.current);
+      progressTimer.current = null;
+    }
+  };
 
   const pushTimer = (timer: ReturnType<typeof setTimeout>) => {
     timers.current.push(timer);
     return timer;
   };
 
-  const startParse = () => {
-    setPhase('parsing');
-    setStepIndex(0);
-
-    const advance = (index: number) => {
-      if (index >= PARSE_STEPS.length) {
-        pushTimer(setTimeout(() => setPhase('ready'), 450));
-        return;
-      }
-
-      setStepIndex(index);
-      pushTimer(setTimeout(() => advance(index + 1), 720));
-    };
-
-    advance(0);
-  };
-
-  const startUpload = () => {
+  const startUpload = async (candidate: File) => {
+    clearAsyncState();
     setPhase('uploading');
     setProgress(0);
+    setStepIndex(0);
+    setUploadResult(null);
 
-    const advance = (nextProgress: number) => {
-      if (nextProgress >= 100) {
-        setProgress(100);
-        pushTimer(setTimeout(startParse, 360));
-        return;
-      }
-
-      setProgress(nextProgress);
-      pushTimer(setTimeout(() => advance(Math.min(100, nextProgress + 17)), 180));
-    };
-
-    pushTimer(setTimeout(() => advance(14), 200));
-  };
-
-  const acceptFile = (candidate: { name: string; sizeMB: number }) => {
     const ext = candidate.name.split('.').pop()?.toLowerCase() ?? '';
+    const sizeMB = candidate.size / (1024 * 1024);
 
     if (!ACCEPTED_PROTOCOL_EXTENSIONS.includes(ext)) {
-      setError(`"${candidate.name}" is not a supported format. Upload a PDF or Word protocol.`);
+      setError(`"${candidate.name}" is not a supported format. Upload a PDF protocol.`);
       setPhase('invalid');
       return;
     }
 
-    if (candidate.sizeMB > MAX_PROTOCOL_MB) {
+    if (sizeMB > MAX_PROTOCOL_MB) {
       setError(
-        `"${candidate.name}" is ${formatUploadSize(candidate.sizeMB)} - over the ${MAX_PROTOCOL_MB} MB limit.`
+        `"${candidate.name}" is ${formatUploadSize(sizeMB)} - over the ${MAX_PROTOCOL_MB} MB limit.`
       );
       setPhase('invalid');
       return;
     }
 
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
     setError('');
-    setFile({ ...candidate, ext });
-    startUpload();
+    setFile({ name: candidate.name, sizeMB, ext });
+
+    pushTimer(setTimeout(() => alive.current && setPhase('parsing'), 650));
+    PARSE_STEPS.forEach((_, index) => {
+      pushTimer(
+        setTimeout(
+          () => {
+            if (alive.current) {
+              setStepIndex(Math.min(index, PARSE_STEPS.length - 1));
+            }
+          },
+          700 + index * 1300
+        )
+      );
+    });
+    progressTimer.current = setInterval(() => {
+      setProgress((current) => Math.min(92, current + 5));
+    }, 350);
+
+    try {
+      const body = new FormData();
+      body.append('file', candidate);
+
+      const response = await fetch('/api/protocols/upload', {
+        method: 'POST',
+        body,
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (UploadCompleteResult & { error?: string })
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? `Upload failed with ${response.status}`);
+      }
+
+      if (!payload?.protocol?.protocolCode || !payload?.run?.runKey) {
+        throw new Error('Upload completed, but the server response was missing protocol metadata.');
+      }
+
+      if (!alive.current) {
+        return;
+      }
+
+      clearAsyncState();
+      setProgress(100);
+      setStepIndex(PARSE_STEPS.length);
+      setUploadResult(payload);
+      setPhase('ready');
+    } catch (caught) {
+      if (!alive.current) {
+        return;
+      }
+
+      clearAsyncState();
+      setProgress(0);
+      setError(caught instanceof Error ? caught.message : 'Upload failed.');
+      setPhase('error');
+    }
   };
 
   const acceptBrowserFile = (candidate?: File | null) => {
@@ -881,10 +941,7 @@ function UploadProtocolModal({
       return;
     }
 
-    acceptFile({
-      name: candidate.name,
-      sizeMB: candidate.size / (1024 * 1024),
-    });
+    void startUpload(candidate);
   };
 
   const openPicker = () => inputRef.current?.click();
@@ -939,7 +996,7 @@ function UploadProtocolModal({
                   ? 'Extracting protocol intelligence...'
                   : phase === 'uploading'
                     ? 'Uploading...'
-                    : 'Phase 3 clinical protocol / PDF or DOCX'}
+                    : 'Phase 3 clinical protocol / PDF'}
             </div>
           </div>
           <button
@@ -953,10 +1010,10 @@ function UploadProtocolModal({
         </div>
 
         <div className="umodal__body">
-          {(phase === 'idle' || phase === 'invalid') && (
+          {(phase === 'idle' || phase === 'invalid' || phase === 'error') && (
             <>
               <div
-                className={`dropzone${drag ? 'is-drag' : ''}${phase === 'invalid' ? 'is-error' : ''}`}
+                className={`dropzone${drag ? 'is-drag' : ''}${phase === 'invalid' || phase === 'error' ? 'is-error' : ''}`}
                 role="button"
                 tabIndex={0}
                 onClick={openPicker}
@@ -976,7 +1033,11 @@ function UploadProtocolModal({
                 onDrop={handleDrop}
               >
                 <span className="dropzone__ic">
-                  {phase === 'invalid' ? <AlertTriangle size={22} /> : <Upload size={22} />}
+                  {phase === 'invalid' || phase === 'error' ? (
+                    <AlertTriangle size={22} />
+                  ) : (
+                    <Upload size={22} />
+                  )}
                 </span>
                 <h3>
                   {drag ? (
@@ -987,41 +1048,24 @@ function UploadProtocolModal({
                     </>
                   )}
                 </h3>
-                <p>Parsing starts on upload - no templates or manual tagging.</p>
-                <div className="formats">PDF / DOCX / max {MAX_PROTOCOL_MB} MB / single file</div>
+                <p>Parsing starts on upload and the result is stored with the processing run.</p>
+                <div className="formats">PDF / max {MAX_PROTOCOL_MB} MB / single file</div>
                 <input
                   ref={inputRef}
                   type="file"
-                  accept=".pdf,.doc,.docx"
+                  accept="application/pdf,.pdf"
                   hidden
                   onChange={handleFileChange}
                 />
               </div>
 
-              {phase === 'invalid' ? (
+              {phase === 'invalid' || phase === 'error' ? (
                 <div className="umodal__note">
                   <Note tone="risk" icon="alert">
                     {error}
                   </Note>
                 </div>
               ) : null}
-
-              <div className="or-row">
-                <span />
-                <b>or</b>
-                <span />
-              </div>
-
-              <button type="button" className="rowlink" onClick={() => acceptFile(SAMPLE_PROTOCOL)}>
-                <FileText size={15} />
-                <span className="rowlink__copy">
-                  <span>Use sample protocol</span>
-                  <span>
-                    {SAMPLE_PROTOCOL.name} / {formatUploadSize(SAMPLE_PROTOCOL.sizeMB)}
-                  </span>
-                </span>
-                <ChevronDown size={14} className="rowlink__arrow" />
-              </button>
             </>
           )}
 
@@ -1075,39 +1119,43 @@ function UploadProtocolModal({
           {phase === 'ready' ? (
             <>
               <Note tone="safe" icon="check">
-                Protocol parsed into 312 chunks. Brief extracted with 12 sections - review
-                confidence on the next screen.
+                Protocol parsed into {uploadResult?.unsiloed.totalChunks ?? 0} chunks and saved to
+                the database. Unsiloed artifacts were written to result.json and output.md.
               </Note>
               <div className="uprev">
                 <div className="full">
                   <dt>Study title</dt>
-                  <dd>{sampleProtocol.title}</dd>
+                  <dd>{uploadResult?.protocol.title ?? 'Uploaded protocol'}</dd>
                 </div>
                 <div>
                   <dt>Sponsor</dt>
-                  <dd>{sampleProtocol.sponsor}</dd>
+                  <dd>{uploadResult?.protocol.sponsor ?? 'Needs review'}</dd>
                 </div>
                 <div>
                   <dt>Phase</dt>
-                  <dd>Phase {sampleProtocol.phase}</dd>
+                  <dd>
+                    {uploadResult?.protocol.phase
+                      ? `Phase ${uploadResult.protocol.phase}`
+                      : 'Needs review'}
+                  </dd>
                 </div>
                 <div>
                   <dt>Indication</dt>
-                  <dd>RSV - LRTD</dd>
+                  <dd>{uploadResult?.protocol.indication ?? 'Needs review'}</dd>
                 </div>
                 <div>
-                  <dt>Population</dt>
-                  <dd>Adults aged 60+</dd>
+                  <dt>Unsiloed job</dt>
+                  <dd>{uploadResult?.unsiloed.jobId ?? '-'}</dd>
                 </div>
                 <div className="full">
-                  <dt>Geography</dt>
-                  <dd>{sampleProtocol.geo.join(' / ')}</dd>
+                  <dt>Stored output</dt>
+                  <dd>{uploadResult?.outputs.outputMarkdownPath ?? '-'}</dd>
                 </div>
               </div>
               <div className="umodal__note">
                 <Note tone="compliance" icon="alert">
-                  2 fields parsed below 80% confidence: modality and specialties. Flagged for review
-                  in the protocol brief.
+                  Inferred protocol fields are marked for Medical Affairs review before downstream
+                  evidence retrieval or MSL brief generation.
                 </Note>
               </div>
             </>
@@ -1118,17 +1166,28 @@ function UploadProtocolModal({
           {phase === 'ready' ? (
             <>
               <ShieldCheck size={14} className="foot-muted-icon" />
-              <span className="foot-note">Indexed to Moss on run start / audit-logged</span>
+              <span className="foot-note">
+                DB persisted / chunks queued for Moss / audit logged
+              </span>
               <ActionButton onClick={onClose}>Cancel</ActionButton>
-              <ActionButton variant="primary" onClick={onComplete}>
+              <ActionButton
+                variant="primary"
+                onClick={() => {
+                  if (uploadResult) {
+                    onComplete(uploadResult);
+                  }
+                }}
+              >
                 <Target size={14} />
-                Start processing run
+                Open protocol
               </ActionButton>
             </>
           ) : phase === 'uploading' || phase === 'parsing' ? (
             <>
               <span className="foot-note">
-                {phase === 'uploading' ? 'Transferring...' : 'Working...'}
+                {phase === 'uploading'
+                  ? 'Transferring...'
+                  : 'Unsiloed parsing can take a few minutes...'}
               </span>
               <ActionButton onClick={onClose}>Cancel</ActionButton>
             </>
@@ -1136,7 +1195,7 @@ function UploadProtocolModal({
             <>
               <ShieldCheck size={14} className="foot-muted-icon" />
               <span className="foot-note">
-                Non-promotional / protocol stays within your workspace
+                Non-promotional / stored under this Medical Affairs workspace
               </span>
               <ActionButton onClick={onClose}>Cancel</ActionButton>
             </>
@@ -2030,18 +2089,22 @@ function NoProtocolsScreen() {
 
 export function MedicalAffairsDashboard({
   initialScreen = 'overview',
+  initialProtocolId,
   initialUploadOpen = false,
   protocols,
   protocolLoadError = null,
 }: {
   initialScreen?: ScreenKey;
+  initialProtocolId?: string;
   initialUploadOpen?: boolean;
   protocols?: DashboardProtocol[];
   protocolLoadError?: string | null;
 }) {
   const dashboardProtocols = protocols ?? demoProtocols;
   const [screen, setScreen] = useState<ScreenKey>(initialScreen);
-  const [protocolId, setProtocolId] = useState(dashboardProtocols[0]?.id ?? '');
+  const [protocolId, setProtocolId] = useState(
+    initialProtocolId ?? dashboardProtocols[0]?.id ?? ''
+  );
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(initialUploadOpen);
   const activeProtocol = useMemo(
@@ -2060,10 +2123,18 @@ export function MedicalAffairsDashboard({
       return;
     }
 
+    if (
+      initialProtocolId &&
+      dashboardProtocols.some((protocol) => protocol.id === initialProtocolId)
+    ) {
+      setProtocolId(initialProtocolId);
+      return;
+    }
+
     if (!dashboardProtocols.some((protocol) => protocol.id === protocolId)) {
       setProtocolId(dashboardProtocols[0].id);
     }
-  }, [dashboardProtocols, protocolId]);
+  }, [dashboardProtocols, initialProtocolId, protocolId]);
 
   useEffect(() => {
     setScreen(initialScreen);
@@ -2075,7 +2146,8 @@ export function MedicalAffairsDashboard({
 
   const go = (nextScreen: ScreenKey) => {
     setScreen(nextScreen);
-    window.history.pushState(null, '', `/dashboard?screen=${nextScreen}`);
+    const selected = protocolId ? `&protocol=${encodeURIComponent(protocolId)}` : '';
+    window.history.pushState(null, '', `/dashboard?screen=${nextScreen}${selected}`);
   };
   const isLibrary = screen === 'protocols' || screen === 'runs';
   const isCompleteDemo = activeProtocol?.id === 'RSV-PreF-301';
@@ -2187,16 +2259,12 @@ export function MedicalAffairsDashboard({
         ) : null}
         {uploadOpen ? (
           <UploadProtocolModal
-            sampleProtocol={activeProtocol ?? dashboardProtocols[0] ?? demoProtocols[0]}
             onClose={() => setUploadOpen(false)}
-            onComplete={() => {
+            onComplete={(result) => {
               setUploadOpen(false);
-              if (dashboardProtocols[0]) {
-                setProtocolId(dashboardProtocols[0].id);
-                setScreen('brief');
-              } else {
-                setScreen('protocols');
-              }
+              window.location.assign(
+                `/dashboard?screen=overview&protocol=${encodeURIComponent(result.protocol.protocolCode)}`
+              );
             }}
           />
         ) : null}

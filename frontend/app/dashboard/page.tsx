@@ -265,6 +265,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       ? (requestedScreen as ScreenKey)
       : 'overview';
   const initialUploadOpen = firstParam(params.upload) === '1';
+  const initialProtocolId = firstParam(params.protocol);
   let dashboardProtocols: DashboardProtocol[] = [];
   let protocolLoadError: string | null = null;
 
@@ -279,6 +280,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   return (
     <MedicalAffairsDashboard
       initialScreen={initialScreen}
+      initialProtocolId={initialProtocolId}
       initialUploadOpen={initialUploadOpen}
       protocols={dashboardProtocols}
       protocolLoadError={protocolLoadError}
