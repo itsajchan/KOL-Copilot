@@ -1,0 +1,2102 @@
+'use client';
+
+import {
+  type ChangeEvent,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
+import {
+  AlertTriangle,
+  BarChart3,
+  BookOpenCheck,
+  Check,
+  ChevronDown,
+  ClipboardCheck,
+  Database,
+  Download,
+  FileCheck2,
+  FileSearch,
+  FileText,
+  Gauge,
+  Home,
+  Library,
+  Mic,
+  Network,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  Target,
+  Upload,
+  Users,
+  X,
+} from 'lucide-react';
+import styles from './medical-affairs-dashboard.module.css';
+
+const LOGO_SRC = '/kol-copilot-logo-mark.svg';
+
+export type ScreenKey =
+  | 'protocols'
+  | 'runs'
+  | 'overview'
+  | 'brief'
+  | 'queries'
+  | 'evidence'
+  | 'candidates'
+  | 'ranking'
+  | 'compliance'
+  | 'moss'
+  | 'summary';
+
+type Tone = 'accent' | 'evidence' | 'compliance' | 'risk' | 'safe' | 'neutral';
+type State = 'done' | 'warn' | 'active' | 'pending' | 'error';
+type IconName = keyof typeof ICONS;
+type DashboardIcon = typeof AlertTriangle;
+type UploadPhase = 'idle' | 'invalid' | 'uploading' | 'parsing' | 'ready';
+type UploadProtocolFile = { name: string; sizeMB: number; ext: string };
+
+const ICONS = {
+  alert: AlertTriangle,
+  brief: FileCheck2,
+  candidates: Users,
+  check: Check,
+  compliance: ShieldCheck,
+  dashboard: Gauge,
+  database: Database,
+  download: Download,
+  evidence: FileSearch,
+  file: FileText,
+  home: Home,
+  library: Library,
+  mic: Mic,
+  moss: Network,
+  queries: Search,
+  ranking: BarChart3,
+  refresh: RefreshCw,
+  runs: ClipboardCheck,
+  shield: ShieldAlert,
+  sliders: SlidersHorizontal,
+  summary: BookOpenCheck,
+  target: Target,
+  upload: Upload,
+} satisfies Record<string, DashboardIcon>;
+
+const navGroups: Array<{
+  group: string;
+  items: Array<{ key: ScreenKey; label: string; icon: IconName; count?: string; tone?: Tone }>;
+}> = [
+  {
+    group: 'Library',
+    items: [
+      { key: 'protocols', label: 'Protocols', icon: 'library' },
+      { key: 'runs', label: 'Processing runs', icon: 'runs' },
+    ],
+  },
+  {
+    group: 'Pipeline',
+    items: [
+      { key: 'overview', label: 'Run overview', icon: 'dashboard' },
+      { key: 'brief', label: 'Protocol brief', icon: 'brief' },
+      { key: 'queries', label: 'Search queries', icon: 'queries' },
+      { key: 'evidence', label: 'Evidence', icon: 'evidence', count: '148' },
+      { key: 'candidates', label: 'KOL candidates', icon: 'candidates', count: '64' },
+      { key: 'ranking', label: 'Ranking', icon: 'sliders' },
+    ],
+  },
+  {
+    group: 'Governance',
+    items: [
+      { key: 'compliance', label: 'Compliance review', icon: 'shield', count: '2', tone: 'risk' },
+      { key: 'moss', label: 'Moss index', icon: 'moss', count: '97%', tone: 'compliance' },
+      { key: 'summary', label: 'Summary / export', icon: 'summary' },
+    ],
+  },
+];
+
+const protocols = [
+  {
+    id: 'RSV-PreF-301',
+    nct: 'NCT05...421',
+    run: 'run_8f2a91',
+    title: 'A Phase 3 Study of a Bivalent RSV Prefusion-F Vaccine in Adults Aged 60+',
+    sponsor: 'Veritan Biologics',
+    phase: '3',
+    indication: 'RSV / LRTD',
+    geo: ['US', 'EU', 'JP', 'AU'],
+    enrollment: '24,800',
+    status: 'Ready for review',
+    statusTone: 'accent' as Tone,
+    updated: '2026-06-06 09:42 UTC',
+    active: true,
+    stages: [
+      { key: 'parsed', label: 'Parsed', state: 'done', detail: '312 chunks' },
+      { key: 'brief', label: 'Brief Extracted', state: 'done', detail: '12 sections' },
+      { key: 'queries', label: 'Queries Generated', state: 'done', detail: '7 groups' },
+      { key: 'evidence', label: 'Evidence Retrieved', state: 'done', detail: '148 sources' },
+      { key: 'kols', label: 'KOLs Extracted', state: 'done', detail: '64 candidates' },
+      { key: 'ranked', label: 'Ranked', state: 'done', detail: '64 scored' },
+      { key: 'moss', label: 'Indexed in Moss', state: 'warn', detail: '3 retrying' },
+      { key: 'review', label: 'Ready for Review', state: 'active', detail: 'Awaiting sign-off' },
+    ] satisfies Stage[],
+  },
+  {
+    id: 'ONC-KRAS-204',
+    nct: 'NCT06...118',
+    run: 'run_7c1e08',
+    title: 'A Phase 2 Study of a KRAS G12C Inhibitor in Previously Treated NSCLC',
+    sponsor: 'Helix Oncology',
+    phase: '2',
+    indication: 'NSCLC / KRAS G12C',
+    geo: ['US', 'EU'],
+    enrollment: '410',
+    status: 'Ranking in progress',
+    statusTone: 'evidence' as Tone,
+    updated: '14 min ago',
+    active: false,
+    stages: [
+      { key: 'parsed', label: 'Parsed', state: 'done', detail: '268 chunks' },
+      { key: 'brief', label: 'Brief Extracted', state: 'done', detail: '12 sections' },
+      { key: 'queries', label: 'Queries Generated', state: 'done', detail: '6 groups' },
+      { key: 'evidence', label: 'Evidence Retrieved', state: 'done', detail: '96 sources' },
+      { key: 'kols', label: 'KOLs Extracted', state: 'done', detail: '41 candidates' },
+      { key: 'ranked', label: 'Ranked', state: 'active', detail: 'Scoring 41...' },
+      { key: 'moss', label: 'Indexed in Moss', state: 'pending', detail: 'Queued' },
+      { key: 'review', label: 'Ready for Review', state: 'pending', detail: 'Pending' },
+    ] satisfies Stage[],
+  },
+  {
+    id: 'NEU-AD-118',
+    nct: 'NCT06...552',
+    run: 'run_6b9d77',
+    title: "A Phase 2 Study of an Anti-Amyloid Antibody in Early Alzheimer's Disease",
+    sponsor: 'Cortexa Therapeutics',
+    phase: '2',
+    indication: "Early Alzheimer's",
+    geo: ['US'],
+    enrollment: '720',
+    status: 'Retrieving evidence',
+    statusTone: 'evidence' as Tone,
+    updated: '3 h ago',
+    active: false,
+    stages: [
+      { key: 'parsed', label: 'Parsed', state: 'done', detail: '301 chunks' },
+      { key: 'brief', label: 'Brief Extracted', state: 'done', detail: '12 sections' },
+      { key: 'queries', label: 'Queries Generated', state: 'done', detail: '7 groups' },
+      { key: 'evidence', label: 'Evidence Retrieved', state: 'active', detail: '52 / 110 sources' },
+      { key: 'kols', label: 'KOLs Extracted', state: 'pending', detail: 'Pending' },
+      { key: 'ranked', label: 'Ranked', state: 'pending', detail: 'Pending' },
+      { key: 'moss', label: 'Indexed in Moss', state: 'pending', detail: 'Pending' },
+      { key: 'review', label: 'Ready for Review', state: 'pending', detail: 'Pending' },
+    ] satisfies Stage[],
+  },
+  {
+    id: 'IMM-PSO-330',
+    nct: 'NCT06...907',
+    run: null,
+    title: 'A Phase 3 Study of an IL-23 Inhibitor in Moderate-to-Severe Plaque Psoriasis',
+    sponsor: 'Aurelia Bio',
+    phase: '3',
+    indication: 'Plaque psoriasis',
+    geo: ['EU', 'JP'],
+    enrollment: '1,150',
+    status: 'Queued',
+    statusTone: 'neutral' as Tone,
+    updated: 'yesterday',
+    active: false,
+    stages: [
+      { key: 'parsed', label: 'Parsed', state: 'pending', detail: 'Queued' },
+      { key: 'brief', label: 'Brief Extracted', state: 'pending', detail: 'Pending' },
+      { key: 'queries', label: 'Queries Generated', state: 'pending', detail: 'Pending' },
+      { key: 'evidence', label: 'Evidence Retrieved', state: 'pending', detail: 'Pending' },
+      { key: 'kols', label: 'KOLs Extracted', state: 'pending', detail: 'Pending' },
+      { key: 'ranked', label: 'Ranked', state: 'pending', detail: 'Pending' },
+      { key: 'moss', label: 'Indexed in Moss', state: 'pending', detail: 'Pending' },
+      { key: 'review', label: 'Ready for Review', state: 'pending', detail: 'Pending' },
+    ] satisfies Stage[],
+  },
+];
+
+type Stage = { key: string; label: string; state: State; detail: string };
+
+const runs = [
+  {
+    id: 'run_8f2a91',
+    protocol: 'RSV-PreF-301',
+    started: '2026-06-06 09:12',
+    duration: '30m',
+    stage: 'Ready for review',
+    state: 'warn' as State,
+    by: 'a.okoye',
+  },
+  {
+    id: 'run_8f2a44',
+    protocol: 'RSV-PreF-301',
+    started: '2026-06-04 14:03',
+    duration: '28m',
+    stage: 'Completed',
+    state: 'done' as State,
+    by: 'system',
+  },
+  {
+    id: 'run_7c1e08',
+    protocol: 'ONC-KRAS-204',
+    started: '2026-06-06 08:20',
+    duration: '-',
+    stage: 'Ranking',
+    state: 'active' as State,
+    by: 'm.singh',
+  },
+  {
+    id: 'run_6b9d77',
+    protocol: 'NEU-AD-118',
+    started: '2026-06-06 06:55',
+    duration: '-',
+    stage: 'Evidence retrieval',
+    state: 'active' as State,
+    by: 'system',
+  },
+];
+
+const statusCards = [
+  {
+    key: 'kols',
+    label: 'KOLs found',
+    value: '64',
+    sub: '18 shortlisted',
+    tone: 'accent' as Tone,
+    icon: 'candidates' as IconName,
+    screen: 'candidates' as ScreenKey,
+  },
+  {
+    key: 'evidence',
+    label: 'Evidence sources',
+    value: '148',
+    sub: 'across 6 source types',
+    tone: 'evidence' as Tone,
+    icon: 'evidence' as IconName,
+    screen: 'evidence' as ScreenKey,
+  },
+  {
+    key: 'missing',
+    label: 'Missing-data warnings',
+    value: '5',
+    sub: '2 affect ranking',
+    tone: 'compliance' as Tone,
+    icon: 'alert' as IconName,
+    screen: 'brief' as ScreenKey,
+  },
+  {
+    key: 'flags',
+    label: 'Compliance flags',
+    value: '2',
+    sub: 'open / reviewer required',
+    tone: 'risk' as Tone,
+    icon: 'shield' as IconName,
+    screen: 'compliance' as ScreenKey,
+  },
+  {
+    key: 'moss',
+    label: 'Moss index',
+    value: '97%',
+    sub: '3 chunks retrying',
+    tone: 'compliance' as Tone,
+    icon: 'database' as IconName,
+    screen: 'moss' as ScreenKey,
+  },
+];
+
+const brief = [
+  {
+    section: 'Study title',
+    value: 'A Phase 3 Study of a Bivalent RSV Prefusion-F Vaccine in Adults Aged 60+',
+    confidence: 99,
+    chunk: 'Section 1.1 / p.1',
+    status: 'validated',
+  },
+  {
+    section: 'Indication',
+    value: 'Respiratory Syncytial Virus - lower respiratory tract disease',
+    confidence: 96,
+    chunk: 'Section 2.1 / p.4',
+    status: 'validated',
+  },
+  {
+    section: 'Intervention',
+    value: 'Bivalent RSV prefusion-F subunit vaccine, single intramuscular dose',
+    confidence: 95,
+    chunk: 'Section 3.2 / p.9',
+    status: 'validated',
+  },
+  {
+    section: 'Patient population',
+    value: 'Community-dwelling, immunocompetent adults aged 60+',
+    confidence: 94,
+    chunk: 'Section 4.1 / p.13',
+    status: 'validated',
+  },
+  {
+    section: 'Primary endpoint',
+    value: 'Vaccine efficacy against RSV-confirmed LRTD with at least two signs',
+    confidence: 97,
+    chunk: 'Section 6.1 / p.22',
+    status: 'validated',
+  },
+  {
+    section: 'Relevant specialties',
+    value: 'Vaccinology / Infectious Disease / Geriatric Medicine / Pulmonology',
+    confidence: 72,
+    chunk: 'Derived',
+    status: 'review',
+  },
+];
+
+const queryGroups = [
+  {
+    name: 'Disease state + trial investigator',
+    status: 'approved',
+    results: 41,
+    sources: 'ClinicalTrials.gov, PubMed',
+    queries: [
+      '"RSV" AND "lower respiratory tract disease" AND principal investigator',
+      'RSV prefusion vaccine trial investigator adults 60+',
+    ],
+  },
+  {
+    name: 'Intervention class + publication author',
+    status: 'edited',
+    results: 53,
+    sources: 'PubMed',
+    queries: ['prefusion F subunit vaccine author', 'AS01 adjuvant RSV immunogenicity author'],
+  },
+  {
+    name: 'Endpoint keywords + expert',
+    status: 'approved',
+    results: 34,
+    sources: 'PubMed, congress pages',
+    queries: ['neutralizing titers RSV day 30 expert', 'RSV-confirmed LRTD efficacy author'],
+  },
+  {
+    name: 'Congress speakers',
+    status: 'regenerating',
+    results: null,
+    sources: 'Congress pages',
+    queries: ['IDWeek RSV session speaker 2024-2025', 'ESWI RSV symposium faculty'],
+  },
+];
+
+const evidence = [
+  {
+    id: 'e1',
+    type: 'Publication',
+    title: 'Efficacy of a bivalent RSV prefusion F vaccine in older adults',
+    host: 'N Engl J Med',
+    date: '2024-03',
+    score: 96,
+    strength: 'strong',
+    snippet:
+      'A single dose conferred efficacy against RSV-confirmed LRTD with at least two signs in adults aged 60 years or older.',
+    kols: ['Dr. Elena Marchetti'],
+  },
+  {
+    id: 'e2',
+    type: 'Publication',
+    title: 'Neutralizing antibody responses to RSV prefusion F immunization',
+    host: 'Lancet Infect Dis',
+    date: '2023-11',
+    score: 91,
+    strength: 'strong',
+    snippet:
+      'Day-30 neutralizing titers rose against RSV-A and RSV-B subgroups after prefusion-F immunization.',
+    kols: ['Prof. Hideo Tanaka', 'Dr. Elena Marchetti'],
+  },
+  {
+    id: 'e3',
+    type: 'Trial registry',
+    title: 'Phase 3 RSV prefusion-F efficacy study - site investigators',
+    host: 'ClinicalTrials.gov',
+    date: '2022-08',
+    score: 89,
+    strength: 'strong',
+    snippet:
+      'Listed as coordinating principal investigator across 14 EU sites for the pivotal efficacy cohort.',
+    kols: ['Dr. Elena Marchetti'],
+  },
+  {
+    id: 'e4',
+    type: 'Guideline',
+    title: 'Immunization of older adults against RSV - advisory statement',
+    host: 'ACIP / society',
+    date: '2024-06',
+    score: 84,
+    strength: 'moderate',
+    snippet:
+      'Contributing author to the working group recommendation on RSV vaccination for adults 60+.',
+    kols: ['Dr. Amara Okonkwo'],
+  },
+  {
+    id: 'e5',
+    type: 'Congress',
+    title: 'IDWeek 2025 - RSV in the aging immune system',
+    host: 'IDWeek',
+    date: '2025-10',
+    score: 78,
+    strength: 'moderate',
+    snippet:
+      'Invited faculty; presented on immunosenescence and prefusion-F durability in older adults.',
+    kols: ['Prof. Hideo Tanaka'],
+  },
+];
+
+const candidates = [
+  {
+    id: 'marchetti',
+    rank: 1,
+    name: 'Dr. Elena Marchetti',
+    institution: 'Karolinska Institutet',
+    specialty: 'Vaccinology',
+    geo: 'EU / Sweden',
+    score: 92.4,
+    sources: 37,
+    flags: 0,
+    status: 'validated',
+    rationale:
+      "Direct Phase 3 prefusion-F trial leadership and authorship on the protocol's primary efficacy endpoint.",
+    dimensions: [19.2, 24.0, 18.5, 9.4, 12.8, 8.5],
+  },
+  {
+    id: 'tanaka',
+    rank: 2,
+    name: 'Prof. Hideo Tanaka',
+    institution: 'University of Tokyo',
+    specialty: 'Infectious Disease',
+    geo: 'APAC / Japan',
+    score: 88.1,
+    sources: 29,
+    flags: 1,
+    status: 'review',
+    rationale:
+      'Related adult RSV Phase 3 experience and a strong publication record on the immunogenicity endpoint.',
+    dimensions: [18.1, 20.0, 19.0, 8.6, 13.4, 9.0],
+  },
+  {
+    id: 'okonkwo',
+    rank: 3,
+    name: 'Dr. Amara Okonkwo',
+    institution: 'Johns Hopkins',
+    specialty: 'Geriatric Medicine',
+    geo: 'US',
+    score: 84.6,
+    sources: 22,
+    flags: 0,
+    status: 'validated',
+    rationale:
+      'Authored geriatric immunization guidance relevant to the 60+ population and related LRTD research.',
+    dimensions: [17.4, 17.5, 17.6, 9.0, 14.1, 9.0],
+  },
+  {
+    id: 'andersson',
+    rank: 4,
+    name: 'Dr. Lars Andersson',
+    institution: 'Lund University',
+    specialty: 'Vaccinology',
+    geo: 'EU / Sweden',
+    score: 81.2,
+    sources: 19,
+    flags: 0,
+    status: 'validated',
+    rationale: 'Authored durability and booster-interval modeling for prefusion-F responses.',
+    dimensions: [16.8, 16.0, 18.0, 8.0, 11.4, 11.0],
+  },
+  {
+    id: 'delacroix',
+    rank: 5,
+    name: 'Prof. Marie Delacroix',
+    institution: 'Institut Pasteur',
+    specialty: 'Pulmonology',
+    geo: 'EU / France',
+    score: 76.8,
+    sources: 14,
+    flags: 1,
+    status: 'review',
+    rationale:
+      'Characterized lower-respiratory sequelae relevant to the endpoint; below two-source threshold.',
+    dimensions: [15.0, 12.0, 16.5, 7.8, 10.5, 8.0],
+  },
+];
+
+const rankingDimensions = [
+  { label: 'Protocol match', weight: '20%' },
+  { label: 'Trial investigator experience', weight: '25%' },
+  { label: 'Publication relevance', weight: '20%' },
+  { label: 'Institution / site relevance', weight: '10%' },
+  { label: 'Guideline / congress influence', weight: '15%' },
+  { label: 'Recency', weight: '10%' },
+];
+
+const guardrails = [
+  { label: 'No promotional language', ok: true },
+  { label: 'Do not rank by prescribing volume', ok: true },
+  { label: 'No investigational safety or efficacy claims', ok: true },
+  { label: 'Frame outreach as non-promotional scientific exchange', ok: true },
+  { label: 'Every recommendation carries supporting evidence', ok: false },
+];
+
+const complianceFlags = [
+  {
+    severity: 'high',
+    kol: 'Dr. Grace Mwangi',
+    type: 'Transparency / payment note',
+    detail:
+      'Open Payments record indicates a consulting relationship in the indication area. Disclose and route to reviewer before outreach.',
+    status: 'open',
+  },
+  {
+    severity: 'medium',
+    kol: 'Prof. Marie Delacroix',
+    type: 'Missing source citation',
+    detail:
+      'Ranking rationale references trial sequelae, but the linked evidence count is below the two-source threshold.',
+    status: 'open',
+  },
+  {
+    severity: 'low',
+    kol: 'Prof. Hideo Tanaka',
+    type: 'Unsupported phrasing',
+    detail:
+      'Draft brief used "leading expert"; rewritten to "scientifically relevant, evidence-supported".',
+    status: 'resolved',
+  },
+];
+
+const mossAssets = [
+  { label: 'Protocol chunks', chunks: 312, embedded: 312, failed: 0, state: 'done' as State },
+  { label: 'Evidence chunks', chunks: 148, embedded: 148, failed: 0, state: 'done' as State },
+  { label: 'KOL profiles', chunks: 64, embedded: 61, failed: 3, state: 'error' as State },
+  { label: 'Ranking metadata', chunks: 64, embedded: 64, failed: 0, state: 'done' as State },
+  { label: 'Source citations', chunks: 148, embedded: 148, failed: 0, state: 'done' as State },
+];
+
+const exports = [
+  {
+    fmt: 'PDF',
+    label: 'Review packet',
+    desc: 'Brief, top KOLs, evidence appendix, and compliance notes.',
+  },
+  {
+    fmt: 'CSV',
+    label: 'Candidates',
+    desc: 'All 64 candidates with scores and source counts.',
+  },
+  {
+    fmt: 'JSON',
+    label: 'Structured export',
+    desc: 'Brief, queries, evidence, ranking, and audit trail.',
+  },
+];
+
+const voiceQa = [
+  {
+    q: 'Why is Dr. Marchetti ranked #1?',
+    a: 'Dr. Elena Marchetti scores 92.4 because she was coordinating principal investigator across 14 EU sites and first-authored evidence on the protocol primary LRTD endpoint in adults 60+.',
+    chips: ['3 citations', 'Guardrail check passed'],
+  },
+  {
+    q: 'Which KOLs have direct Phase 3 trial experience?',
+    a: 'Two candidates have direct Phase 3 prefusion-F experience: Dr. Marchetti and Prof. Tanaka. Dr. Okonkwo is relevant through geriatric immunization guidance but no pivotal trial role was found.',
+    chips: ['2 citations', 'Scientific relevance only'],
+  },
+  {
+    q: 'Draft a compliant MSL pre-call brief for Dr. Tanaka',
+    a: 'Generated a non-promotional pre-call brief with related trial experience, recent immunogenicity publications, suggested scientific-exchange topics, and source-linked claims.',
+    chips: ['Non-promotional', 'Audit logged'],
+  },
+];
+
+function IconToken({ name, size = 16 }: { name: IconName; size?: number }) {
+  const Icon = ICONS[name];
+  return <Icon size={size} aria-hidden="true" />;
+}
+
+function Badge({
+  tone = 'neutral',
+  children,
+}: {
+  tone?: Tone | State | string;
+  children: ReactNode;
+}) {
+  return <span className={`badge badge--${tone}`}>{children}</span>;
+}
+
+function ActionButton({
+  children,
+  variant = 'secondary',
+  onClick,
+}: {
+  children: ReactNode;
+  variant?: 'primary' | 'secondary';
+  onClick?: () => void;
+}) {
+  return (
+    <button type="button" className={`action action--${variant}`} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+function ScreenHead({
+  eyebrow,
+  title,
+  desc,
+  actions,
+}: {
+  eyebrow: string;
+  title: string;
+  desc: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="shead">
+      <div>
+        <div className="shead__ey">{eyebrow}</div>
+        <h1>{title}</h1>
+        <p>{desc}</p>
+      </div>
+      {actions ? <div className="shead__actions">{actions}</div> : null}
+    </div>
+  );
+}
+
+function Panel({
+  eyebrow,
+  title,
+  actions,
+  children,
+  noBody = false,
+}: {
+  eyebrow?: string;
+  title?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  noBody?: boolean;
+}) {
+  return (
+    <section className="panel">
+      {title || actions ? (
+        <div className="panel__head">
+          <div>
+            {eyebrow ? <div className="panel__eyebrow">{eyebrow}</div> : null}
+            {title ? <div className="panel__title">{title}</div> : null}
+          </div>
+          {actions ? <div className="panel__actions">{actions}</div> : null}
+        </div>
+      ) : null}
+      {noBody ? children : <div className="panel__body">{children}</div>}
+    </section>
+  );
+}
+
+function Note({ tone, icon, children }: { tone: Tone; icon: IconName; children: ReactNode }) {
+  return (
+    <div className={`note note--${tone}`}>
+      <IconToken name={icon} />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function MiniBar({
+  value,
+  max = 100,
+  tone = 'evidence',
+}: {
+  value: number;
+  max?: number;
+  tone?: Tone;
+}) {
+  return (
+    <span className="mbar">
+      <span className="mbar__track">
+        <span
+          className={`mbar__fill mbar__fill--${tone}`}
+          style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
+        />
+      </span>
+      <span className="mbar__value">{value}</span>
+    </span>
+  );
+}
+
+function StageDot({ state }: { state: State }) {
+  return (
+    <span className={`stage-dot stage-dot--${state}`}>
+      {state === 'done' ? <Check size={11} aria-hidden="true" /> : null}
+      {state === 'warn' || state === 'error' ? (
+        <AlertTriangle size={10} aria-hidden="true" />
+      ) : null}
+      {state === 'active' ? <span /> : null}
+    </span>
+  );
+}
+
+const ACCEPTED_PROTOCOL_EXTENSIONS = ['pdf', 'docx', 'doc'];
+const MAX_PROTOCOL_MB = 50;
+const SAMPLE_PROTOCOL = {
+  name: 'RSV-PreF-301_Protocol_Amendment-4.pdf',
+  sizeMB: 4.2,
+};
+const PARSE_STEPS = [
+  { label: 'Parsing document structure', count: '312 chunks' },
+  { label: 'Extracting protocol brief', count: '12 sections' },
+  { label: 'Detecting endpoints & population', count: '2 endpoints' },
+  { label: 'Classifying specialties & themes', count: '4 specialties' },
+];
+
+function formatUploadSize(sizeMB: number) {
+  return sizeMB >= 1 ? `${sizeMB.toFixed(1)} MB` : `${Math.max(1, Math.round(sizeMB * 1024))} KB`;
+}
+
+function UploadProtocolModal({
+  onClose,
+  onComplete,
+}: {
+  onClose: () => void;
+  onComplete: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [phase, setPhase] = useState<UploadPhase>('idle');
+  const [file, setFile] = useState<UploadProtocolFile | null>(null);
+  const [drag, setDrag] = useState(false);
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [stepIndex, setStepIndex] = useState(0);
+
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      timers.current.forEach(clearTimeout);
+    };
+  }, [onClose]);
+
+  const pushTimer = (timer: ReturnType<typeof setTimeout>) => {
+    timers.current.push(timer);
+    return timer;
+  };
+
+  const startParse = () => {
+    setPhase('parsing');
+    setStepIndex(0);
+
+    const advance = (index: number) => {
+      if (index >= PARSE_STEPS.length) {
+        pushTimer(setTimeout(() => setPhase('ready'), 450));
+        return;
+      }
+
+      setStepIndex(index);
+      pushTimer(setTimeout(() => advance(index + 1), 720));
+    };
+
+    advance(0);
+  };
+
+  const startUpload = () => {
+    setPhase('uploading');
+    setProgress(0);
+
+    const advance = (nextProgress: number) => {
+      if (nextProgress >= 100) {
+        setProgress(100);
+        pushTimer(setTimeout(startParse, 360));
+        return;
+      }
+
+      setProgress(nextProgress);
+      pushTimer(setTimeout(() => advance(Math.min(100, nextProgress + 17)), 180));
+    };
+
+    pushTimer(setTimeout(() => advance(14), 200));
+  };
+
+  const acceptFile = (candidate: { name: string; sizeMB: number }) => {
+    const ext = candidate.name.split('.').pop()?.toLowerCase() ?? '';
+
+    if (!ACCEPTED_PROTOCOL_EXTENSIONS.includes(ext)) {
+      setError(`"${candidate.name}" is not a supported format. Upload a PDF or Word protocol.`);
+      setPhase('invalid');
+      return;
+    }
+
+    if (candidate.sizeMB > MAX_PROTOCOL_MB) {
+      setError(
+        `"${candidate.name}" is ${formatUploadSize(candidate.sizeMB)} - over the ${MAX_PROTOCOL_MB} MB limit.`
+      );
+      setPhase('invalid');
+      return;
+    }
+
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setError('');
+    setFile({ ...candidate, ext });
+    startUpload();
+  };
+
+  const acceptBrowserFile = (candidate?: File | null) => {
+    if (!candidate) {
+      return;
+    }
+
+    acceptFile({
+      name: candidate.name,
+      sizeMB: candidate.size / (1024 * 1024),
+    });
+  };
+
+  const openPicker = () => inputRef.current?.click();
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    acceptBrowserFile(event.target.files?.[0]);
+    event.target.value = '';
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDrag(false);
+    acceptBrowserFile(event.dataTransfer.files?.[0]);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    openPicker();
+  };
+
+  return (
+    <div
+      className="umodal-scrim"
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <section
+        className="umodal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="umodal__head">
+          <span className="umi">
+            <Upload size={17} />
+          </span>
+          <div className="umodal__copy">
+            <h2 id="upload-title">Upload protocol</h2>
+            <div className="sub">
+              {phase === 'ready'
+                ? 'Parsed / ready to start run'
+                : phase === 'parsing'
+                  ? 'Extracting protocol intelligence...'
+                  : phase === 'uploading'
+                    ? 'Uploading...'
+                    : 'Phase 3 clinical protocol / PDF or DOCX'}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label="Close upload modal"
+            onClick={onClose}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="umodal__body">
+          {(phase === 'idle' || phase === 'invalid') && (
+            <>
+              <div
+                className={`dropzone${drag ? 'is-drag' : ''}${phase === 'invalid' ? 'is-error' : ''}`}
+                role="button"
+                tabIndex={0}
+                onClick={openPicker}
+                onKeyDown={handleKeyDown}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setDrag(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDrag(true);
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  setDrag(false);
+                }}
+                onDrop={handleDrop}
+              >
+                <span className="dropzone__ic">
+                  {phase === 'invalid' ? <AlertTriangle size={22} /> : <Upload size={22} />}
+                </span>
+                <h3>
+                  {drag ? (
+                    'Drop to begin parsing'
+                  ) : (
+                    <>
+                      Drag & drop, or <b>browse</b>
+                    </>
+                  )}
+                </h3>
+                <p>Parsing starts on upload - no templates or manual tagging.</p>
+                <div className="formats">PDF / DOCX / max {MAX_PROTOCOL_MB} MB / single file</div>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  hidden
+                  onChange={handleFileChange}
+                />
+              </div>
+
+              {phase === 'invalid' ? (
+                <div className="umodal__note">
+                  <Note tone="risk" icon="alert">
+                    {error}
+                  </Note>
+                </div>
+              ) : null}
+
+              <div className="or-row">
+                <span />
+                <b>or</b>
+                <span />
+              </div>
+
+              <button type="button" className="rowlink" onClick={() => acceptFile(SAMPLE_PROTOCOL)}>
+                <FileText size={15} />
+                <span className="rowlink__copy">
+                  <span>Use sample protocol</span>
+                  <span>
+                    {SAMPLE_PROTOCOL.name} / {formatUploadSize(SAMPLE_PROTOCOL.sizeMB)}
+                  </span>
+                </span>
+                <ChevronDown size={14} className="rowlink__arrow" />
+              </button>
+            </>
+          )}
+
+          {phase === 'uploading' && file ? (
+            <>
+              <div className="ufile">
+                <span className="ufile__ic">{file.ext.toUpperCase().slice(0, 3)}</span>
+                <div className="ufile__copy">
+                  <div className="ufile__nm">{file.name}</div>
+                  <div className="ufile__meta">
+                    {formatUploadSize(file.sizeMB)} / uploading {progress}%
+                  </div>
+                </div>
+                <span className="spinner" />
+              </div>
+              <div className="uprog">
+                <i style={{ width: `${progress}%` }} />
+              </div>
+            </>
+          ) : null}
+
+          {phase === 'parsing' && file ? (
+            <>
+              <div className="ufile">
+                <span className="ufile__ic">{file.ext.toUpperCase().slice(0, 3)}</span>
+                <div className="ufile__copy">
+                  <div className="ufile__nm">{file.name}</div>
+                  <div className="ufile__meta">{formatUploadSize(file.sizeMB)} / uploaded</div>
+                </div>
+                <Badge tone="safe">Uploaded</Badge>
+              </div>
+              <div className="usteps">
+                {PARSE_STEPS.map((step, index) => {
+                  const state =
+                    index < stepIndex ? 'done' : index === stepIndex ? 'active' : 'pending';
+                  return (
+                    <div key={step.label} className={`ustep ustep--${state}`}>
+                      <span className="ustep__dot">
+                        {state === 'done' ? <Check size={12} /> : null}
+                        {state === 'active' ? <span className="spinner spinner--small" /> : null}
+                      </span>
+                      <span className="ustep__lab">{step.label}</span>
+                      {state === 'done' ? <span className="ustep__ct">{step.count}</span> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+
+          {phase === 'ready' ? (
+            <>
+              <Note tone="safe" icon="check">
+                Protocol parsed into 312 chunks. Brief extracted with 12 sections - review
+                confidence on the next screen.
+              </Note>
+              <div className="uprev">
+                <div className="full">
+                  <dt>Study title</dt>
+                  <dd>{protocols[0].title}</dd>
+                </div>
+                <div>
+                  <dt>Sponsor</dt>
+                  <dd>{protocols[0].sponsor}</dd>
+                </div>
+                <div>
+                  <dt>Phase</dt>
+                  <dd>Phase {protocols[0].phase}</dd>
+                </div>
+                <div>
+                  <dt>Indication</dt>
+                  <dd>RSV - LRTD</dd>
+                </div>
+                <div>
+                  <dt>Population</dt>
+                  <dd>Adults aged 60+</dd>
+                </div>
+                <div className="full">
+                  <dt>Geography</dt>
+                  <dd>{protocols[0].geo.join(' / ')}</dd>
+                </div>
+              </div>
+              <div className="umodal__note">
+                <Note tone="compliance" icon="alert">
+                  2 fields parsed below 80% confidence: modality and specialties. Flagged for review
+                  in the protocol brief.
+                </Note>
+              </div>
+            </>
+          ) : null}
+        </div>
+
+        <div className="umodal__foot">
+          {phase === 'ready' ? (
+            <>
+              <ShieldCheck size={14} className="foot-muted-icon" />
+              <span className="foot-note">Indexed to Moss on run start / audit-logged</span>
+              <ActionButton onClick={onClose}>Cancel</ActionButton>
+              <ActionButton variant="primary" onClick={onComplete}>
+                <Target size={14} />
+                Start processing run
+              </ActionButton>
+            </>
+          ) : phase === 'uploading' || phase === 'parsing' ? (
+            <>
+              <span className="foot-note">
+                {phase === 'uploading' ? 'Transferring...' : 'Working...'}
+              </span>
+              <ActionButton onClick={onClose}>Cancel</ActionButton>
+            </>
+          ) : (
+            <>
+              <ShieldCheck size={14} className="foot-muted-icon" />
+              <span className="foot-note">
+                Non-promotional / protocol stays within your workspace
+              </span>
+              <ActionButton onClick={onClose}>Cancel</ActionButton>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProtocolHeader({
+  activeProtocol,
+  protocolId,
+  setProtocolId,
+  voiceOpen,
+  setVoiceOpen,
+}: {
+  activeProtocol: (typeof protocols)[number];
+  protocolId: string;
+  setProtocolId: (id: string) => void;
+  voiceOpen: boolean;
+  setVoiceOpen: (open: boolean) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <div className="phead">
+      <div className="phead__main">
+        <div className="phead__topline">
+          <div className="pswitch">
+            <button
+              type="button"
+              className="pswitch__btn"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <span>{activeProtocol.id}</span>
+              <ChevronDown size={13} aria-hidden="true" />
+            </button>
+            {menuOpen ? (
+              <div className="pmenu">
+                <div className="pmenu__head">Switch protocol</div>
+                {protocols.map((protocol) => (
+                  <button
+                    key={protocol.id}
+                    type="button"
+                    className="pmenu__item"
+                    aria-current={protocol.id === protocolId}
+                    onClick={() => {
+                      setProtocolId(protocol.id);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <span className="pmenu__tick">
+                      {protocol.id === protocolId ? <Check size={14} /> : null}
+                    </span>
+                    <span className="pmenu__copy">
+                      <span className="pmenu__id">{protocol.id}</span>
+                      <span className="pmenu__meta">
+                        {protocol.sponsor} / Ph {protocol.phase} / {protocol.indication}
+                      </span>
+                    </span>
+                    <Badge tone={protocol.statusTone}>{protocol.status}</Badge>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <span className="phead__nct">{activeProtocol.nct}</span>
+        </div>
+        <div className="phead__title">{activeProtocol.title}</div>
+        <div className="tagrow">
+          <span className="tag">Sponsor: {activeProtocol.sponsor}</span>
+          <span className="tag tag--accent">Phase {activeProtocol.phase}</span>
+          <span className="tag">Indication: {activeProtocol.indication}</span>
+          <span className="tag">Geo: {activeProtocol.geo.join(' / ')}</span>
+          <span className="tag">Enroll: {activeProtocol.enrollment}</span>
+        </div>
+      </div>
+      <div className="phead__right">
+        <button
+          type="button"
+          className={`voicebtn${voiceOpen ? 'is-on' : ''}`}
+          aria-pressed={voiceOpen}
+          onClick={() => setVoiceOpen(!voiceOpen)}
+        >
+          <Mic size={15} />
+          {voiceOpen ? 'Voice on' : 'Ask copilot'}
+        </button>
+        <Badge tone={activeProtocol.statusTone}>{activeProtocol.status}</Badge>
+        <div className="phead__ts">Updated {activeProtocol.updated}</div>
+      </div>
+    </div>
+  );
+}
+
+function StageRail({ stages }: { stages: Stage[] }) {
+  return (
+    <div className="stages">
+      {stages.map((stage) => (
+        <div key={stage.key} className={`stage stage--${stage.state}`}>
+          <StageDot state={stage.state} />
+          <span className="stage__txt">
+            <span className="stage__name">{stage.label}</span>
+            <span className="stage__detail">{stage.detail}</span>
+          </span>
+          <span className="stage__line" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OverviewScreen({ go }: { go: (screen: ScreenKey) => void }) {
+  return (
+    <div className="page">
+      <ScreenHead
+        eyebrow="Processing run / run_8f2a91"
+        title="Run overview"
+        desc="Protocol-aware processing for RSV-PreF-301. The run is ready for Medical Affairs review with Moss indexing and compliance sign-off still needing attention."
+        actions={
+          <>
+            <ActionButton>
+              <RefreshCw size={14} />
+              Re-run
+            </ActionButton>
+            <Link href="/dashboard?screen=protocols&upload=1" className="action action--secondary">
+              <Upload size={14} />
+              Upload protocol
+            </Link>
+            <ActionButton variant="primary" onClick={() => go('summary')}>
+              <Download size={14} />
+              Export summary
+            </ActionButton>
+          </>
+        }
+      />
+      <div className="statgrid">
+        {statusCards.map((card) => (
+          <button key={card.key} type="button" className="stat" onClick={() => go(card.screen)}>
+            <span className={`stat__ic stat__ic--${card.tone}`}>
+              <IconToken name={card.icon} />
+            </span>
+            <span className="stat__lab">{card.label}</span>
+            <span className="stat__val">{card.value}</span>
+            <span className="stat__sub">{card.sub}</span>
+          </button>
+        ))}
+      </div>
+      <div className="cols cols--2">
+        <Panel
+          eyebrow="Pipeline"
+          title="Workflow stages"
+          actions={<Badge tone="warn">2 items need attention</Badge>}
+        >
+          <div className="stage-list">
+            {protocols[0].stages.map((stage) => (
+              <div key={stage.key} className="stage-row">
+                <StageDot state={stage.state} />
+                <div>
+                  <div className="stage-row__label">{stage.label}</div>
+                  <div className="stage-row__detail">{stage.detail}</div>
+                </div>
+                <Badge tone={stage.state}>
+                  {stage.state === 'done'
+                    ? 'Complete'
+                    : stage.state === 'warn'
+                      ? 'Warnings'
+                      : stage.state === 'active'
+                        ? 'In review'
+                        : 'Pending'}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <div className="stack">
+          <Panel eyebrow="Attention" title="Needs your review">
+            <div className="stack stack--tight">
+              <Note tone="risk" icon="shield">
+                2 open compliance flags: a transparency note and one sub-threshold evidence count.
+                <button type="button" className="link-button" onClick={() => go('compliance')}>
+                  Open compliance review
+                </button>
+              </Note>
+              <Note tone="compliance" icon="database">
+                3 KOL profiles failed to embed in Moss and are retrying.
+                <button type="button" className="link-button" onClick={() => go('moss')}>
+                  Inspect index
+                </button>
+              </Note>
+              <Note tone="compliance" icon="alert">
+                5 missing-data warnings in the brief; 2 affect ranking.
+                <button type="button" className="link-button" onClick={() => go('brief')}>
+                  Review brief
+                </button>
+              </Note>
+            </div>
+          </Panel>
+          <Panel eyebrow="Governance" title="Active guardrails">
+            <GuardrailList />
+          </Panel>
+        </div>
+      </div>
+      <Panel
+        eyebrow="Shortlist"
+        title="Top protocol-matched KOLs"
+        actions={<ActionButton onClick={() => go('ranking')}>Open ranking</ActionButton>}
+      >
+        <div className="kolgrid">
+          {candidates.slice(0, 3).map((candidate) => (
+            <article key={candidate.id} className="kolcard">
+              <div className="kolcard__top">
+                <span className="rank">0{candidate.rank}</span>
+                <div>
+                  <h3>{candidate.name}</h3>
+                  <p>{candidate.institution}</p>
+                </div>
+                <strong>{candidate.score}</strong>
+              </div>
+              <div className="tagrow">
+                <span className="tag">{candidate.specialty}</span>
+                <span className="tag">{candidate.geo}</span>
+                <Badge tone={candidate.status === 'validated' ? 'safe' : 'compliance'}>
+                  {candidate.status}
+                </Badge>
+              </div>
+              <p>{candidate.rationale}</p>
+            </article>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function ProtocolsScreen({
+  activeProtocolId,
+  setProtocolId,
+  go,
+}: {
+  activeProtocolId: string;
+  setProtocolId: (id: string) => void;
+  go: (screen: ScreenKey) => void;
+}) {
+  return (
+    <div className="page page--wide">
+      <ScreenHead
+        eyebrow="Library"
+        title="Protocols"
+        desc="Select a protocol to scope the processing run, or upload a Phase 3 protocol to begin extraction."
+        actions={
+          <Link href="/dashboard?screen=protocols&upload=1" className="action action--primary">
+            <Upload size={14} />
+            Upload protocol
+          </Link>
+        }
+      />
+      <Panel noBody>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Protocol ID</th>
+              <th>Sponsor</th>
+              <th>Phase</th>
+              <th>Indication</th>
+              <th>Geography</th>
+              <th>Status</th>
+              <th className="num">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {protocols.map((protocol) => (
+              <tr
+                key={protocol.id}
+                aria-selected={protocol.id === activeProtocolId}
+                onClick={() => {
+                  setProtocolId(protocol.id);
+                  go('overview');
+                }}
+              >
+                <td className="mono accent-text">{protocol.id}</td>
+                <td>{protocol.sponsor}</td>
+                <td className="mono">{protocol.phase}</td>
+                <td>{protocol.indication}</td>
+                <td className="mono muted">{protocol.geo.join(' / ')}</td>
+                <td>
+                  <Badge tone={protocol.statusTone}>{protocol.status}</Badge>
+                </td>
+                <td className="num muted">{protocol.updated}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+    </div>
+  );
+}
+
+function RunsScreen({ go }: { go: (screen: ScreenKey) => void }) {
+  return (
+    <div className="page page--wide">
+      <ScreenHead
+        eyebrow="Activity"
+        title="Processing runs"
+        desc="Every orchestration run across the protocol library with stage, duration, and outcome."
+        actions={
+          <ActionButton>
+            <RefreshCw size={14} />
+            Refresh
+          </ActionButton>
+        }
+      />
+      <Panel noBody>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>Protocol</th>
+              <th>Started</th>
+              <th className="num">Duration</th>
+              <th>Stage</th>
+              <th>Status</th>
+              <th>Triggered by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr
+                key={run.id}
+                aria-selected={run.id === 'run_8f2a91'}
+                onClick={() => go('overview')}
+              >
+                <td className="mono accent-text">{run.id}</td>
+                <td className="mono">{run.protocol}</td>
+                <td className="mono muted">{run.started}</td>
+                <td className="num muted">{run.duration}</td>
+                <td>{run.stage}</td>
+                <td>
+                  <Badge tone={run.state}>{run.state === 'active' ? 'Running' : run.state}</Badge>
+                </td>
+                <td className="mono muted">{run.by}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+    </div>
+  );
+}
+
+function BriefScreen() {
+  return (
+    <div className="page">
+      <ScreenHead
+        eyebrow="Protocol parsing"
+        title="Protocol brief"
+        desc="Extracted study attributes used as the job description for retrieval, ranking, and compliant brief generation."
+      />
+      <Panel noBody>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Section</th>
+              <th>Extracted value</th>
+              <th>Confidence</th>
+              <th>Source chunk</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {brief.map((row) => (
+              <tr key={row.section}>
+                <td className="mono">{row.section}</td>
+                <td>{row.value}</td>
+                <td>
+                  <MiniBar
+                    value={row.confidence}
+                    tone={row.confidence > 90 ? 'safe' : 'compliance'}
+                  />
+                </td>
+                <td>
+                  <button type="button" className="chunk">
+                    <FileText size={10} />
+                    {row.chunk}
+                  </button>
+                </td>
+                <td>
+                  <Badge tone={row.status === 'validated' ? 'safe' : 'compliance'}>
+                    {row.status}
+                  </Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+    </div>
+  );
+}
+
+function QueriesScreen() {
+  return (
+    <div className="page">
+      <ScreenHead
+        eyebrow="Retrieval plan"
+        title="Search queries"
+        desc="Protocol-derived query groups for trial registries, publications, congress activity, guidelines, and expert bios."
+      />
+      <div className="querygrid">
+        {queryGroups.map((group) => (
+          <Panel
+            key={group.name}
+            eyebrow={group.sources}
+            title={group.name}
+            actions={
+              <Badge
+                tone={
+                  group.status === 'approved'
+                    ? 'safe'
+                    : group.status === 'edited'
+                      ? 'evidence'
+                      : 'accent'
+                }
+              >
+                {group.status}
+              </Badge>
+            }
+          >
+            <div className="querycard">
+              <div className="querycard__meta">
+                <span>{group.results ?? 'running'} results</span>
+              </div>
+              {group.queries.map((query) => (
+                <code key={query}>{query}</code>
+              ))}
+            </div>
+          </Panel>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceScreen() {
+  return (
+    <div className="page page--wide">
+      <ScreenHead
+        eyebrow="Evidence retrieval"
+        title="Evidence"
+        desc="Source snippets that support KOL relevance, ranking rationale, and generated MSL-ready outputs."
+        actions={
+          <div className="searchbox">
+            <Search size={14} />
+            <span>Search evidence</span>
+          </div>
+        }
+      />
+      <div className="cols cols--ev">
+        <Panel noBody>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Evidence</th>
+                <th>KOLs</th>
+                <th className="num">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {evidence.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <div className="mono accent-text">{item.type}</div>
+                    <div className="muted">{item.host}</div>
+                    <div className="mono muted">{item.date}</div>
+                  </td>
+                  <td>
+                    <div className="evidence-title">{item.title}</div>
+                    <p className="evidence-snippet">{item.snippet}</p>
+                    <Badge tone={item.strength === 'strong' ? 'safe' : 'evidence'}>
+                      {item.strength}
+                    </Badge>
+                  </td>
+                  <td>{item.kols.join(', ')}</td>
+                  <td className="num">
+                    <MiniBar value={item.score} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
+        <Panel eyebrow="Traceability" title="Citation policy">
+          <div className="stack stack--tight">
+            <Note tone="safe" icon="check">
+              Recommendations require source-linked evidence before they can appear in MSL-ready
+              output.
+            </Note>
+            <Note tone="evidence" icon="evidence">
+              Evidence is grouped by publications, trial records, guidelines, congress activity,
+              institutional profiles, and transparency signals.
+            </Note>
+            <div className="metric-list">
+              <span>ClinicalTrials.gov</span>
+              <strong>38</strong>
+              <span>PubMed</span>
+              <strong>71</strong>
+              <span>Congress / guidelines</span>
+              <strong>25</strong>
+            </div>
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function CandidatesScreen() {
+  return (
+    <div className="page page--wide">
+      <ScreenHead
+        eyebrow="Expert extraction"
+        title="KOL candidates"
+        desc="Candidate experts extracted from evidence snippets and normalized into Medical Affairs-ready profile rows."
+      />
+      <Panel noBody>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Name</th>
+              <th>Institution</th>
+              <th>Specialty</th>
+              <th>Geography</th>
+              <th className="num">Sources</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map((candidate) => (
+              <tr key={candidate.id}>
+                <td className="mono">#{candidate.rank}</td>
+                <td className="accent-text">{candidate.name}</td>
+                <td>{candidate.institution}</td>
+                <td>{candidate.specialty}</td>
+                <td className="mono muted">{candidate.geo}</td>
+                <td className="num">{candidate.sources}</td>
+                <td>
+                  <Badge tone={candidate.status === 'validated' ? 'safe' : 'compliance'}>
+                    {candidate.status}
+                  </Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+    </div>
+  );
+}
+
+function RankingScreen() {
+  return (
+    <div className="page page--wide">
+      <ScreenHead
+        eyebrow="Explainable scoring"
+        title="Ranking"
+        desc="Hardcoded MVP weights expose why one expert outranks another without relying on commercial prescribing signals."
+      />
+      <Panel noBody>
+        <table className="matrix">
+          <thead>
+            <tr>
+              <th>KOL</th>
+              {rankingDimensions.map((dimension) => (
+                <th key={dimension.label}>
+                  {dimension.label}
+                  <span>{dimension.weight}</span>
+                </th>
+              ))}
+              <th className="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map((candidate) => (
+              <tr key={candidate.id}>
+                <td>
+                  <strong>{candidate.name}</strong>
+                  <p>{candidate.rationale}</p>
+                </td>
+                {candidate.dimensions.map((value, index) => (
+                  <td key={`${candidate.id}-${rankingDimensions[index].label}`}>
+                    <MiniBar value={value} max={index === 1 ? 25 : index === 4 ? 15 : 20} />
+                  </td>
+                ))}
+                <td className="num total">{candidate.score}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+    </div>
+  );
+}
+
+function GuardrailList() {
+  return (
+    <div className="guard-list">
+      {guardrails.map((guardrail) => (
+        <div
+          key={guardrail.label}
+          className={guardrail.ok ? 'guard guard--ok' : 'guard guard--warn'}
+        >
+          {guardrail.ok ? <Check size={14} /> : <AlertTriangle size={14} />}
+          <span>{guardrail.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ComplianceScreen() {
+  return (
+    <div className="page">
+      <ScreenHead
+        eyebrow="Governance"
+        title="Compliance review"
+        desc="Medical Affairs guardrails keep recommendations non-promotional, cited, and separated from commercial targeting."
+      />
+      <div className="cols cols--2">
+        <Panel eyebrow="Rules" title="Guardrail checks">
+          <GuardrailList />
+        </Panel>
+        <Panel eyebrow="Open items" title="Reviewer flags">
+          <div className="stack stack--tight">
+            {complianceFlags.map((flag) => (
+              <article key={`${flag.kol}-${flag.type}`} className={`flag flag--${flag.severity}`}>
+                <div className="flag__top">
+                  <Badge tone={flag.status === 'resolved' ? 'safe' : 'risk'}>{flag.status}</Badge>
+                  <span>{flag.severity}</span>
+                </div>
+                <h3>{flag.type}</h3>
+                <strong>{flag.kol}</strong>
+                <p>{flag.detail}</p>
+              </article>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function MossScreen() {
+  return (
+    <div className="page">
+      <ScreenHead
+        eyebrow="Moss index"
+        title="Index health"
+        desc="Protocol chunks, evidence snippets, profile summaries, ranking metadata, and citations pushed to the semantic index."
+      />
+      <Panel eyebrow="Embedding status" title="Assets">
+        <div className="moss-list">
+          {mossAssets.map((asset) => {
+            const percent = Math.round((asset.embedded / asset.chunks) * 100);
+            return (
+              <div key={asset.label} className="moss-row">
+                <div>
+                  <strong>{asset.label}</strong>
+                  <span>
+                    {asset.embedded} / {asset.chunks} embedded
+                    {asset.failed ? ` / ${asset.failed} failed` : ''}
+                  </span>
+                </div>
+                <div className={`meter meter--${asset.state}`}>
+                  <span style={{ width: `${percent}%` }} />
+                </div>
+                <Badge tone={asset.state}>
+                  {asset.state === 'error' ? 'Retrying' : asset.state}
+                </Badge>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function SummaryScreen() {
+  return (
+    <div className="page">
+      <ScreenHead
+        eyebrow="Export"
+        title="Summary / export"
+        desc="Review packet options for Medical Affairs sign-off, downstream MSL preparation, and audit trails."
+      />
+      <div className="cols cols--2">
+        <Panel eyebrow="Exports" title="Available packets">
+          <div className="export-list">
+            {exports.map((item) => (
+              <button key={item.fmt} type="button" className="export-card">
+                <span>{item.fmt}</span>
+                <div>
+                  <strong>{item.label}</strong>
+                  <p>{item.desc}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </Panel>
+        <Panel eyebrow="Warnings" title="Before sign-off">
+          <div className="stack stack--tight">
+            <Note tone="compliance" icon="alert">
+              Relevant specialties and scientific themes are derived, not directly stated in the
+              protocol.
+            </Note>
+            <Note tone="risk" icon="shield">
+              One candidate remains below the two-source evidence threshold.
+            </Note>
+            <Note tone="compliance" icon="database">
+              Three KOL profiles are retrying in Moss.
+            </Note>
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function StageGate({
+  activeProtocol,
+  go,
+}: {
+  activeProtocol: (typeof protocols)[number];
+  go: (s: ScreenKey) => void;
+}) {
+  const activeStage = activeProtocol.stages.find((stage) => stage.state === 'active');
+
+  return (
+    <div className="page">
+      <Panel>
+        <div className="empty">
+          <span className="empty__icon">
+            <RefreshCw size={22} />
+          </span>
+          <h2>{activeStage ? `${activeStage.label} is running` : 'Run not ready for this view'}</h2>
+          <p>
+            {activeProtocol.id} has not reached the fully reviewable dashboard state. The complete
+            evidence-backed prototype is wired for RSV-PreF-301.
+          </p>
+          <ActionButton variant="primary" onClick={() => go('overview')}>
+            Open run overview
+          </ActionButton>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function VoicePanel({
+  activeProtocol,
+  onClose,
+}: {
+  activeProtocol: (typeof protocols)[number];
+  onClose: () => void;
+}) {
+  const [activeQuestion, setActiveQuestion] = useState(voiceQa[0].q);
+  const answer = voiceQa.find((item) => item.q === activeQuestion) ?? voiceQa[0];
+
+  return (
+    <aside className="voicepanel" aria-label="Voice copilot">
+      <div className="voicepanel__head">
+        <span className="voicepanel__mark">
+          <Image src={LOGO_SRC} alt="" width={24} height={24} />
+        </span>
+        <div>
+          <h2>Voice copilot</h2>
+          <p>
+            Scoped to <b>{activeProtocol.id}</b>
+          </p>
+        </div>
+        <button type="button" className="iconbtn" aria-label="Close voice panel" onClick={onClose}>
+          <X size={16} />
+        </button>
+      </div>
+      <div className="voice-control">
+        <span className="voice-control__button">
+          <Mic size={18} />
+        </span>
+        <div>
+          <div className="voice-control__status">Listening / 0:12</div>
+          <div className="voice-control__transcript">Ask a protocol-aware KOL question</div>
+        </div>
+      </div>
+      <div className="voicepanel__body">
+        <div className="suggestions">
+          {voiceQa.map((item) => (
+            <button
+              key={item.q}
+              type="button"
+              className="vchip"
+              disabled={item.q === activeQuestion}
+              onClick={() => setActiveQuestion(item.q)}
+            >
+              {item.q}
+            </button>
+          ))}
+        </div>
+        <div className="qa">
+          <div className="qa__q">
+            <span>You</span>
+            <p>{answer.q}</p>
+          </div>
+          <div className="qa__a">
+            <span>KOL Copilot</span>
+            <p>{answer.a}</p>
+            <div className="qa__chips">
+              {answer.chips.map((chip) => (
+                <Badge
+                  key={chip}
+                  tone={chip.includes('Guardrail') || chip.includes('Non') ? 'safe' : 'evidence'}
+                >
+                  {chip}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="voicepanel__foot">
+        <div className="vinput">
+          <span>Ask about ranking, evidence, citations, or MSL brief prep</span>
+          <button type="button" aria-label="Start voice input">
+            <Mic size={16} />
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+export function MedicalAffairsDashboard({
+  initialScreen = 'overview',
+  initialUploadOpen = false,
+}: {
+  initialScreen?: ScreenKey;
+  initialUploadOpen?: boolean;
+}) {
+  const [screen, setScreen] = useState<ScreenKey>(initialScreen);
+  const [protocolId, setProtocolId] = useState(protocols[0].id);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(initialUploadOpen);
+  const activeProtocol = useMemo(
+    () => protocols.find((protocol) => protocol.id === protocolId) ?? protocols[0],
+    [protocolId]
+  );
+
+  useEffect(() => {
+    setScreen(initialScreen);
+  }, [initialScreen]);
+
+  useEffect(() => {
+    setUploadOpen(initialUploadOpen);
+  }, [initialUploadOpen]);
+
+  const go = (nextScreen: ScreenKey) => {
+    setScreen(nextScreen);
+    window.history.pushState(null, '', `/dashboard?screen=${nextScreen}`);
+  };
+  const isLibrary = screen === 'protocols' || screen === 'runs';
+  const isCompleteDemo = activeProtocol.id === 'RSV-PreF-301';
+
+  function renderScreen() {
+    if (screen === 'protocols') {
+      return (
+        <ProtocolsScreen activeProtocolId={protocolId} setProtocolId={setProtocolId} go={go} />
+      );
+    }
+    if (screen === 'runs') {
+      return <RunsScreen go={go} />;
+    }
+    if (!isCompleteDemo && screen !== 'overview') {
+      return <StageGate activeProtocol={activeProtocol} go={go} />;
+    }
+    switch (screen) {
+      case 'brief':
+        return <BriefScreen />;
+      case 'queries':
+        return <QueriesScreen />;
+      case 'evidence':
+        return <EvidenceScreen />;
+      case 'candidates':
+        return <CandidatesScreen />;
+      case 'ranking':
+        return <RankingScreen />;
+      case 'compliance':
+        return <ComplianceScreen />;
+      case 'moss':
+        return <MossScreen />;
+      case 'summary':
+        return <SummaryScreen />;
+      case 'overview':
+      default:
+        return <OverviewScreen go={go} />;
+    }
+  }
+
+  return (
+    <div className={styles.root}>
+      <div className="app-shell">
+        <aside className="side">
+          <Link href="/" className="side__brand" aria-label="KOL Copilot landing page">
+            <Image src={LOGO_SRC} alt="" width={26} height={26} />
+            <span>
+              <span className="side__name">Copilot</span>
+              <span className="side__tag">Orchestrator</span>
+            </span>
+          </Link>
+          <div className="side__scroll">
+            {navGroups.map((group) => (
+              <div key={group.group} className="side__group">
+                <div className="side__label">{group.group}</div>
+                {group.items.map((item) => (
+                  <Link
+                    key={item.key}
+                    href={`/dashboard?screen=${item.key}`}
+                    className="navitem"
+                    aria-current={screen === item.key}
+                  >
+                    <IconToken name={item.icon} />
+                    <span>{item.label}</span>
+                    {item.count ? (
+                      <span className={`ct ct--${item.tone ?? 'neutral'}`}>{item.count}</span>
+                    ) : null}
+                  </Link>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="side__foot">
+            Veritan Biologics
+            <br />
+            Medical Affairs / {activeProtocol.run ?? 'queued'}
+          </div>
+        </aside>
+
+        <main className="main">
+          {!isLibrary ? (
+            <>
+              <ProtocolHeader
+                activeProtocol={activeProtocol}
+                protocolId={protocolId}
+                setProtocolId={setProtocolId}
+                voiceOpen={voiceOpen}
+                setVoiceOpen={setVoiceOpen}
+              />
+              <StageRail stages={activeProtocol.stages} />
+            </>
+          ) : null}
+          <div className="content">{renderScreen()}</div>
+        </main>
+
+        {voiceOpen ? (
+          <VoicePanel activeProtocol={activeProtocol} onClose={() => setVoiceOpen(false)} />
+        ) : null}
+        {uploadOpen ? (
+          <UploadProtocolModal
+            onClose={() => setUploadOpen(false)}
+            onComplete={() => {
+              setUploadOpen(false);
+              setProtocolId(protocols[0].id);
+              setScreen('brief');
+            }}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
