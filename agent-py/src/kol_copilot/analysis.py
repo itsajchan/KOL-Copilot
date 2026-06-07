@@ -10,8 +10,8 @@ from typing import Any
 
 from agents import Agent, AsyncOpenAI, RunConfig, Runner, set_default_openai_client
 from agents.model_settings import ModelSettings
-from dotenv import load_dotenv
 
+from .env import load_project_env
 from .schemas import (
     AgenticAnalysisResult,
     KolCandidate,
@@ -420,7 +420,7 @@ def configure_logging(level_name: str) -> None:
 
 
 def main() -> None:
-    load_dotenv(".env.local")
+    load_project_env()
     args = parse_args()
     configure_logging(args.log_level)
     payload = _load_payload()

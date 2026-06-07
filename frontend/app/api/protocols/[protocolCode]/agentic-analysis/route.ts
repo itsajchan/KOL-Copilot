@@ -107,6 +107,31 @@ type AgenticAnalysis = {
   audit_trail: string[];
 };
 
+type MossIndexAssetReport = {
+  asset_type: string;
+  label: string;
+  index_name: string;
+  document_ids: string[];
+  doc_count: number;
+};
+
+type MossIndexingReport = {
+  ok: boolean;
+  model_id?: string;
+  indexes?: Record<
+    string,
+    {
+      index_name: string;
+      operation: string;
+      doc_count: number;
+      job_id?: string | null;
+      load_error?: string | null;
+    }
+  >;
+  assets: MossIndexAssetReport[];
+  document_count: number;
+};
+
 function jsonError(message: string, status = 400, details?: Record<string, unknown>) {
   return NextResponse.json({ error: message, ...details }, { status });
 }
@@ -309,6 +334,72 @@ function dateOrNull(value?: string | null) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function mossAssetType(value: string): MossAssetType {
+  return Object.values(MossAssetType).includes(value as MossAssetType)
+    ? (value as MossAssetType)
+    : MossAssetType.EVIDENCE_CHUNK;
+}
+
+function fallbackMossAssetReports(analysis: AgenticAnalysis): MossIndexAssetReport[] {
+  const protocolDocCount =
+    1 +
+    analysis.search_query_groups.length +
+    (analysis.compliance_notes.length ? 1 : 0) +
+    (analysis.audit_trail.length ? 1 : 0);
+  const evidenceDocCount = analysis.evidence.reduce(
+    (sum, item) => sum + Math.max(item.linked_kols.length, 1),
+    0
+  );
+  const citationDocCount =
+    analysis.top_kols.reduce((sum, candidate) => sum + candidate.citations.length, 0) +
+    (analysis.msl_brief?.citations.length ?? 0);
+
+  return [
+    {
+      asset_type: MossAssetType.PROTOCOL_CHUNK,
+      label: 'Protocol summary, search plan, compliance, and audit',
+      index_name: process.env.MOSS_PROTOCOL_INDEX_NAME ?? 'protocols',
+      document_ids: [],
+      doc_count: protocolDocCount,
+    },
+    {
+      asset_type: MossAssetType.EVIDENCE_CHUNK,
+      label: 'Evidence chunks',
+      index_name: process.env.MOSS_EXPERT_INDEX_NAME ?? 'kol_experts',
+      document_ids: [],
+      doc_count: evidenceDocCount,
+    },
+    {
+      asset_type: MossAssetType.EXPERT_PROFILE,
+      label: 'KOL profiles',
+      index_name: process.env.MOSS_EXPERT_INDEX_NAME ?? 'kol_experts',
+      document_ids: [],
+      doc_count: analysis.top_kols.length,
+    },
+    {
+      asset_type: MossAssetType.RANKING_METADATA,
+      label: 'Ranking metadata',
+      index_name: process.env.MOSS_EXPERT_INDEX_NAME ?? 'kol_experts',
+      document_ids: [],
+      doc_count: analysis.top_kols.length,
+    },
+    {
+      asset_type: MossAssetType.SOURCE_CITATION,
+      label: 'Source citations',
+      index_name: process.env.MOSS_EXPERT_INDEX_NAME ?? 'kol_experts',
+      document_ids: [],
+      doc_count: citationDocCount,
+    },
+    {
+      asset_type: MossAssetType.BRIEF,
+      label: 'MSL brief',
+      index_name: process.env.MOSS_EXPERT_INDEX_NAME ?? 'kol_experts',
+      document_ids: [],
+      doc_count: analysis.msl_brief ? 1 : 0,
+    },
+  ];
+}
+
 async function createAnalysisRun(protocolId: string, chunkCount: number, briefCount: number) {
   const runKey = `run_agentic_${randomBytes(4).toString('hex')}`;
   return await prisma.$transaction(async (tx) => {
@@ -459,6 +550,62 @@ async function runPythonAgent(payload: Record<string, unknown>): Promise<Agentic
   });
 }
 
+async function runMossIndexer(payload: Record<string, unknown>): Promise<MossIndexingReport> {
+  const agentDir = path.resolve(process.cwd(), '..', 'agent-py');
+  const agentSrc = path.join(agentDir, 'src');
+  const python = pythonExecutable(agentDir);
+  const timeoutMs = Number(process.env.KOL_COPILOT_MOSS_TIMEOUT_MS ?? 120000);
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(python, ['-m', 'kol_copilot.moss_indexer'], {
+      cwd: agentDir,
+      env: {
+        ...process.env,
+        PYTHONPATH: process.env.PYTHONPATH
+          ? `${agentSrc}${path.delimiter}${process.env.PYTHONPATH}`
+          : agentSrc,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Moss indexing timed out.'));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(stderr || `Moss indexer exited with status ${code}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout) as MossIndexingReport);
+      } catch (error) {
+        reject(
+          new Error(
+            `Moss indexer returned invalid JSON: ${
+              error instanceof Error ? error.message : 'parse failed'
+            }\n${stderr}`
+          )
+        );
+      }
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
 async function persistAgenticAnalysis({
   protocolId,
   protocolCode,
@@ -520,6 +667,26 @@ async function persistAgenticAnalysis({
   await mkdir(snapshotDir, { recursive: true });
   await writeFile(resultJsonPath, `${JSON.stringify(analysis, null, 2)}\n`);
   await writeFile(snapshotPath, `${JSON.stringify(analysis, null, 2)}\n`);
+
+  let mossIndexing: MossIndexingReport | null = null;
+  let mossIndexingError: string | null = null;
+  try {
+    mossIndexing = await runMossIndexer({
+      protocol_id: protocolCode,
+      run_id: runId,
+      run_key: runKey,
+      analysis,
+    });
+  } catch (error) {
+    mossIndexingError = truncateText(
+      error instanceof Error ? error.message : 'Moss indexing failed.',
+      1400
+    );
+  }
+  const mossAssetReports = mossIndexing?.assets?.length
+    ? mossIndexing.assets
+    : fallbackMossAssetReports(analysis);
+  const mossStatus = mossIndexingError ? MossIndexStatus.FAILED : MossIndexStatus.EMBEDDED;
 
   await prisma.$transaction(async (tx) => {
     await tx.protocol.update({
@@ -913,30 +1080,44 @@ async function persistAgenticAnalysis({
       }
     }
 
-    const mossAssets = [
-      [MossAssetType.EVIDENCE_CHUNK, 'Evidence chunks', analysis.evidence.length],
-      [MossAssetType.EXPERT_PROFILE, 'KOL profiles', analysis.top_kols.length],
-      [MossAssetType.RANKING_METADATA, 'Ranking metadata', analysis.top_kols.length],
-      [
-        MossAssetType.SOURCE_CITATION,
-        'Source citations',
-        analysis.top_kols.reduce((sum, candidate) => sum + candidate.citations.length, 0),
-      ],
-      [MossAssetType.BRIEF, 'MSL brief', analysis.msl_brief ? 1 : 0],
-    ] as const;
-    for (const [assetType, label, totalChunks] of mossAssets) {
-      await tx.mossIndexAsset.create({
+    for (const asset of mossAssetReports) {
+      const totalChunks = asset.doc_count || asset.document_ids.length;
+      const createdAsset = await tx.mossIndexAsset.create({
         data: {
           protocolId,
           runId,
-          assetType,
-          label,
+          assetType: mossAssetType(asset.asset_type),
+          label: asset.label,
           totalChunks,
-          embeddedChunks: totalChunks,
-          failedChunks: 0,
-          status: MossIndexStatus.EMBEDDED,
+          embeddedChunks: mossIndexingError ? 0 : totalChunks,
+          failedChunks: mossIndexingError ? totalChunks : 0,
+          status: mossStatus,
         },
+        select: { id: true },
       });
+      if (!mossIndexingError && asset.document_ids.length) {
+        await tx.mossIndexItem.createMany({
+          data: asset.document_ids.map((documentId) => ({
+            assetId: createdAsset.id,
+            protocolId,
+            runId,
+            assetType: mossAssetType(asset.asset_type),
+            objectType: asset.asset_type.toLowerCase(),
+            objectId: documentId,
+            mossDocumentId: documentId,
+            namespace: asset.index_name,
+            status: MossIndexStatus.EMBEDDED,
+            metadata: asJson({
+              label: asset.label,
+              indexName: asset.index_name,
+              modelId: mossIndexing?.model_id ?? null,
+              indexOperation: mossIndexing?.indexes?.[asset.index_name]?.operation ?? null,
+              loadError: mossIndexing?.indexes?.[asset.index_name]?.load_error ?? null,
+            }),
+            embeddedAt: completedAt,
+          })),
+        });
+      }
     }
 
     await tx.exportArtifact.create({
@@ -999,8 +1180,10 @@ async function persistAgenticAnalysis({
     await tx.processingStage.update({
       where: { runId_key: { runId, key: ProcessingStageKey.MOSS } },
       data: {
-        status: ProcessingStageStatus.DONE,
-        detail: 'Structured assets available to LiveKit',
+        status: mossIndexingError ? ProcessingStageStatus.ERROR : ProcessingStageStatus.DONE,
+        detail: mossIndexingError
+          ? truncateText(`Moss indexing failed: ${mossIndexingError}`, 240)
+          : `${mossIndexing?.document_count ?? 0} structured documents available to LiveKit`,
         startedAt: completedAt,
         completedAt,
       },
@@ -1033,7 +1216,18 @@ async function persistAgenticAnalysis({
               (sum, candidate) => sum + candidate.citations.length,
               0
             ),
+            mossDocuments: mossIndexing?.document_count ?? 0,
           },
+          mossIndexing: mossIndexing
+            ? {
+                ok: true,
+                documentCount: mossIndexing.document_count,
+                indexes: mossIndexing.indexes,
+              }
+            : {
+                ok: false,
+                error: mossIndexingError,
+              },
           outputs: { resultJsonPath, snapshotPath },
         }),
       },
@@ -1049,12 +1243,22 @@ async function persistAgenticAnalysis({
           resultJsonPath,
           snapshotPath,
           auditTrail: analysis.audit_trail,
+          mossIndexing: mossIndexing
+            ? {
+                ok: true,
+                documentCount: mossIndexing.document_count,
+                indexes: mossIndexing.indexes,
+              }
+            : {
+                ok: false,
+                error: mossIndexingError,
+              },
         }),
       },
     });
   });
 
-  return { resultJsonPath, snapshotPath };
+  return { resultJsonPath, snapshotPath, mossIndexing, mossIndexingError };
 }
 
 async function markFailed(protocolId: string, runId: string, message: string) {

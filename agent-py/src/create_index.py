@@ -25,15 +25,18 @@ from moss import DocumentInfo, MossClient
 # Resolve paths relative to this file so the script works regardless of the
 # current working directory. ``src/create_index.py`` -> parent.parent == agent-py/.
 AGENT_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = AGENT_DIR.parent
 KNOWLEDGE_PATH = AGENT_DIR / "knowledge.json"
 ENV_PATH = AGENT_DIR / ".env.local"
+FRONTEND_ENV_PATH = REPO_ROOT / "frontend" / ".env"
 
 DEFAULT_MODEL_ID = "moss-minilm"
 DEFAULT_KNOWLEDGE_INDEX = "knowledge"
 DEFAULT_MEMORY_INDEX = "memory"
 
 # Load environment variables from agent-py/.env.local.
-load_dotenv(ENV_PATH)
+load_dotenv(ENV_PATH, override=False)
+load_dotenv(FRONTEND_ENV_PATH, override=False)
 
 
 def _load_knowledge_documents() -> list[DocumentInfo]:

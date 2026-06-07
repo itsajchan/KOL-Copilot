@@ -5,6 +5,7 @@ import os
 import textwrap
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -26,7 +27,9 @@ from moss import DocumentInfo, MossClient, QueryOptions
 
 logger = logging.getLogger("agent")
 
-load_dotenv(".env.local")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(REPO_ROOT / "agent-py" / ".env.local", override=False)
+load_dotenv(REPO_ROOT / "frontend" / ".env", override=False)
 
 # Moss index names (overridable via env so create_index.py and the agent
 # stay in sync). `knowledge` backs RAG; `memory` is the per-user agentic

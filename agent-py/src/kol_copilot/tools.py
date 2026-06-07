@@ -6,6 +6,7 @@ from typing import Any
 
 from moss import MossClient, QueryOptions
 
+from .env import load_project_env
 from .pipeline_store import load_agentic_analysis
 from .schemas import (
     Citation,
@@ -177,6 +178,7 @@ async def _query_moss_documents(
 
     client = MossClient(context.moss_project_id, context.moss_project_key)
     try:
+        await client.load_index(index_name)
         result = await client.query(index_name, query, QueryOptions(top_k=top_k))
     except Exception:
         return []
@@ -310,6 +312,7 @@ def build_msl_brief(candidate: KolCandidate, protocol: ProtocolProfile) -> MslBr
 def build_context_from_env(
     *, user_id: str, protocol_id: str, protocol_profile: ProtocolProfile | None = None
 ) -> KolAgentContext:
+    load_project_env()
     return KolAgentContext(
         user_id=user_id,
         protocol_id=protocol_id,
