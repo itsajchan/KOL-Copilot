@@ -16,16 +16,21 @@ def _wants_brief(user_text: str) -> bool:
     return "brief" in lowered or "pre-call" in lowered or "precall" in lowered
 
 
+def _trim_voice_text(text: str, *, max_words: int = 24) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]).rstrip(".,;:") + "."
+
+
 def voice_summary(result: KolQueryResult) -> str:
     if not result.top_kols:
-        return result.answer
+        return _trim_voice_text(result.answer)
 
     top = result.top_kols[0]
     return (
-        f"The top match is {top.name} at {top.institution}, with a score of "
-        f"{top.score:.1f}. The rationale is scientific protocol fit, trial and "
-        f"publication evidence, and Medical Affairs relevance. I also surfaced "
-        "compliance notes and citations for the UI."
+        f"I found protocol matches. {top.name} is first at {top.institution}. "
+        "I updated the cards and citations."
     )
 
 

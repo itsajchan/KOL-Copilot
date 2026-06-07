@@ -268,4 +268,4 @@ async def test_voice_summary_is_concise(monkeypatch) -> None:
     summary = voice_summary(result)
 
     assert result.top_kols[0].name in summary
-    assert len(summary.split()) < 60
+    assert len(summary.split()) < 25

@@ -83,6 +83,27 @@ def stub_moss(monkeypatch):
     monkeypatch.setattr(agent_module, "MossClient", _FakeMossClient)
 
 
+def test_voice_turn_handling_defaults_are_latency_tuned(monkeypatch) -> None:
+    monkeypatch.delenv("VOICE_TURN_DETECTION_MODE", raising=False)
+    monkeypatch.delenv("VOICE_ENDPOINTING_MODE", raising=False)
+    monkeypatch.delenv("VOICE_MIN_ENDPOINTING_DELAY", raising=False)
+    monkeypatch.delenv("VOICE_MAX_ENDPOINTING_DELAY", raising=False)
+    monkeypatch.delenv("VOICE_AUDIO_ENHANCEMENT", raising=False)
+
+    turn_handling = agent_module._voice_turn_handling()
+
+    assert turn_handling["turn_detection"] == "vad"
+    assert turn_handling["endpointing"] == {
+        "mode": "fixed",
+        "min_delay": 0.2,
+        "max_delay": 1.2,
+    }
+    assert turn_handling["interruption"]["enabled"] is True
+    assert turn_handling["interruption"]["mode"] == "vad"
+    assert turn_handling["preemptive_generation"]["preemptive_tts"] is True
+    assert agent_module._voice_noise_cancellation() is None
+
+
 async def test_search_knowledge_returns_joined_text_and_publishes_context(
     stub_moss,
 ) -> None:

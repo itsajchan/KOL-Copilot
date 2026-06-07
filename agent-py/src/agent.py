@@ -47,7 +47,13 @@ MOSS_NOT_CONFIGURED_MESSAGE = (
     "Moss is not configured yet. Add MOSS_PROJECT_ID and MOSS_PROJECT_KEY "
     "to agent-py/.env.local to enable knowledge search and memory."
 )
-LIVEKIT_LLM_MODEL = os.getenv("LIVEKIT_LLM_MODEL", "openai/gpt-5.2-chat-latest")
+LIVEKIT_LLM_MODEL = os.getenv("LIVEKIT_LLM_MODEL", "openai/gpt-4.1-mini")
+LIVEKIT_STT_MODEL = os.getenv("LIVEKIT_STT_MODEL", "deepgram/nova-3")
+LIVEKIT_STT_LANGUAGE = os.getenv("LIVEKIT_STT_LANGUAGE", "en")
+LIVEKIT_TTS_MODEL = os.getenv("LIVEKIT_TTS_MODEL", "cartesia/sonic-3")
+LIVEKIT_TTS_VOICE = os.getenv(
+    "LIVEKIT_TTS_VOICE", "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+)
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -55,6 +61,97 @@ def _env_flag(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid float for %s=%r; using %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer for %s=%r; using %s", name, raw, default)
+        return default
+
+
+def _env_optional_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid float for %s=%r; ignoring it", name, raw)
+        return None
+
+
+def _voice_turn_detection():
+    mode = os.getenv("VOICE_TURN_DETECTION_MODE", "vad").strip().lower()
+    if mode == "multilingual":
+        return MultilingualModel(
+            unlikely_threshold=_env_optional_float("VOICE_EOU_UNLIKELY_THRESHOLD")
+        )
+    if mode in {"stt", "vad", "realtime_llm", "manual"}:
+        return mode
+    logger.warning("Invalid VOICE_TURN_DETECTION_MODE=%r; using vad", mode)
+    return "vad"
+
+
+def _voice_endpointing_mode() -> str:
+    mode = os.getenv("VOICE_ENDPOINTING_MODE", "fixed").strip().lower()
+    if mode in {"fixed", "dynamic"}:
+        return mode
+    logger.warning("Invalid VOICE_ENDPOINTING_MODE=%r; using fixed", mode)
+    return "fixed"
+
+
+def _voice_interruption_mode() -> str:
+    mode = os.getenv("VOICE_INTERRUPTION_MODE", "vad").strip().lower()
+    if mode in {"adaptive", "vad"}:
+        return mode
+    logger.warning("Invalid VOICE_INTERRUPTION_MODE=%r; using vad", mode)
+    return "vad"
+
+
+def _voice_turn_handling() -> dict[str, Any]:
+    return {
+        "turn_detection": _voice_turn_detection(),
+        "endpointing": {
+            "mode": _voice_endpointing_mode(),
+            "min_delay": _env_float("VOICE_MIN_ENDPOINTING_DELAY", 0.2),
+            "max_delay": _env_float("VOICE_MAX_ENDPOINTING_DELAY", 1.2),
+        },
+        "interruption": {
+            "enabled": _env_flag("VOICE_ALLOW_INTERRUPTIONS", True),
+            "mode": _voice_interruption_mode(),
+            "min_duration": _env_float("VOICE_MIN_INTERRUPTION_DURATION", 0.25),
+            "min_words": _env_int("VOICE_MIN_INTERRUPTION_WORDS", 0),
+        },
+        "preemptive_generation": {
+            "enabled": _env_flag("VOICE_PREEMPTIVE_GENERATION", True),
+            "preemptive_tts": _env_flag("VOICE_PREEMPTIVE_TTS", True),
+            "max_speech_duration": _env_float(
+                "VOICE_PREEMPTIVE_MAX_SPEECH_DURATION", 6.0
+            ),
+        },
+    }
+
+
+def _voice_noise_cancellation():
+    if not _env_flag("VOICE_AUDIO_ENHANCEMENT", False):
+        return None
+    return ai_coustics.audio_enhancement(model=ai_coustics.EnhancerModel.QUAIL_VF_S)
 
 
 def _display_value(value: Any) -> str | None:
@@ -500,19 +597,14 @@ async def my_agent(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=inference.STT(model="deepgram/nova-3", language="multi"),
+        stt=inference.STT(model=LIVEKIT_STT_MODEL, language=LIVEKIT_STT_LANGUAGE),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts=inference.TTS(
-            model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-        ),
+        tts=inference.TTS(model=LIVEKIT_TTS_MODEL, voice=LIVEKIT_TTS_VOICE),
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
         # See more at https://docs.livekit.io/agents/build/turns
-        turn_detection=MultilingualModel(),
+        turn_handling=_voice_turn_handling(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        preemptive_generation=True,
     )
 
     # Start the session, which initializes the voice pipeline and warms up the models
@@ -526,9 +618,7 @@ async def my_agent(ctx: JobContext):
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
-                noise_cancellation=ai_coustics.audio_enhancement(
-                    model=ai_coustics.EnhancerModel.QUAIL_VF_S
-                ),
+                noise_cancellation=_voice_noise_cancellation(),
             ),
         ),
     )
