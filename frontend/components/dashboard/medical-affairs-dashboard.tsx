@@ -62,6 +62,24 @@ type IconName = keyof typeof ICONS;
 type DashboardIcon = typeof AlertTriangle;
 type UploadPhase = 'idle' | 'invalid' | 'uploading' | 'parsing' | 'ready';
 type UploadProtocolFile = { name: string; sizeMB: number; ext: string };
+type Stage = { key: string; label: string; state: State; detail: string };
+
+export type DashboardProtocol = {
+  id: string;
+  nct: string;
+  run: string | null;
+  title: string;
+  sponsor: string;
+  phase: string;
+  indication: string;
+  geo: string[];
+  enrollment: string;
+  status: string;
+  statusTone: Tone;
+  updated: string;
+  active: boolean;
+  stages: Stage[];
+};
 
 const ICONS = {
   alert: AlertTriangle,
@@ -121,7 +139,7 @@ const navGroups: Array<{
   },
 ];
 
-const protocols = [
+const demoProtocols: DashboardProtocol[] = [
   {
     id: 'RSV-PreF-301',
     nct: 'NCT05...421',
@@ -223,8 +241,6 @@ const protocols = [
     ] satisfies Stage[],
   },
 ];
-
-type Stage = { key: string; label: string; state: State; detail: string };
 
 const runs = [
   {
@@ -766,9 +782,11 @@ function formatUploadSize(sizeMB: number) {
 function UploadProtocolModal({
   onClose,
   onComplete,
+  sampleProtocol,
 }: {
   onClose: () => void;
   onComplete: () => void;
+  sampleProtocol: DashboardProtocol;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -1063,15 +1081,15 @@ function UploadProtocolModal({
               <div className="uprev">
                 <div className="full">
                   <dt>Study title</dt>
-                  <dd>{protocols[0].title}</dd>
+                  <dd>{sampleProtocol.title}</dd>
                 </div>
                 <div>
                   <dt>Sponsor</dt>
-                  <dd>{protocols[0].sponsor}</dd>
+                  <dd>{sampleProtocol.sponsor}</dd>
                 </div>
                 <div>
                   <dt>Phase</dt>
-                  <dd>Phase {protocols[0].phase}</dd>
+                  <dd>Phase {sampleProtocol.phase}</dd>
                 </div>
                 <div>
                   <dt>Indication</dt>
@@ -1083,7 +1101,7 @@ function UploadProtocolModal({
                 </div>
                 <div className="full">
                   <dt>Geography</dt>
-                  <dd>{protocols[0].geo.join(' / ')}</dd>
+                  <dd>{sampleProtocol.geo.join(' / ')}</dd>
                 </div>
               </div>
               <div className="umodal__note">
@@ -1131,12 +1149,14 @@ function UploadProtocolModal({
 
 function ProtocolHeader({
   activeProtocol,
+  protocols,
   protocolId,
   setProtocolId,
   voiceOpen,
   setVoiceOpen,
 }: {
-  activeProtocol: (typeof protocols)[number];
+  activeProtocol: DashboardProtocol;
+  protocols: DashboardProtocol[];
   protocolId: string;
   setProtocolId: (id: string) => void;
   voiceOpen: boolean;
@@ -1232,13 +1252,19 @@ function StageRail({ stages }: { stages: Stage[] }) {
   );
 }
 
-function OverviewScreen({ go }: { go: (screen: ScreenKey) => void }) {
+function OverviewScreen({
+  activeProtocol,
+  go,
+}: {
+  activeProtocol: DashboardProtocol;
+  go: (screen: ScreenKey) => void;
+}) {
   return (
     <div className="page">
       <ScreenHead
-        eyebrow="Processing run / run_8f2a91"
+        eyebrow={`Processing run / ${activeProtocol.run ?? 'queued'}`}
         title="Run overview"
-        desc="Protocol-aware processing for RSV-PreF-301. The run is ready for Medical Affairs review with Moss indexing and compliance sign-off still needing attention."
+        desc={`Protocol-aware processing for ${activeProtocol.id}. Current status: ${activeProtocol.status}.`}
         actions={
           <>
             <ActionButton>
@@ -1275,7 +1301,7 @@ function OverviewScreen({ go }: { go: (screen: ScreenKey) => void }) {
           actions={<Badge tone="warn">2 items need attention</Badge>}
         >
           <div className="stage-list">
-            {protocols[0].stages.map((stage) => (
+            {activeProtocol.stages.map((stage) => (
               <div key={stage.key} className="stage-row">
                 <StageDot state={stage.state} />
                 <div>
@@ -1357,10 +1383,14 @@ function OverviewScreen({ go }: { go: (screen: ScreenKey) => void }) {
 
 function ProtocolsScreen({
   activeProtocolId,
+  protocols,
+  protocolLoadError,
   setProtocolId,
   go,
 }: {
   activeProtocolId: string;
+  protocols: DashboardProtocol[];
+  protocolLoadError?: string | null;
   setProtocolId: (id: string) => void;
   go: (screen: ScreenKey) => void;
 }) {
@@ -1377,6 +1407,11 @@ function ProtocolsScreen({
           </Link>
         }
       />
+      {protocolLoadError ? (
+        <Note tone="risk" icon="database">
+          {protocolLoadError}
+        </Note>
+      ) : null}
       <Panel noBody>
         <table className="tbl">
           <thead>
@@ -1391,26 +1426,34 @@ function ProtocolsScreen({
             </tr>
           </thead>
           <tbody>
-            {protocols.map((protocol) => (
-              <tr
-                key={protocol.id}
-                aria-selected={protocol.id === activeProtocolId}
-                onClick={() => {
-                  setProtocolId(protocol.id);
-                  go('overview');
-                }}
-              >
-                <td className="mono accent-text">{protocol.id}</td>
-                <td>{protocol.sponsor}</td>
-                <td className="mono">{protocol.phase}</td>
-                <td>{protocol.indication}</td>
-                <td className="mono muted">{protocol.geo.join(' / ')}</td>
-                <td>
-                  <Badge tone={protocol.statusTone}>{protocol.status}</Badge>
+            {protocols.length > 0 ? (
+              protocols.map((protocol) => (
+                <tr
+                  key={protocol.id}
+                  aria-selected={protocol.id === activeProtocolId}
+                  onClick={() => {
+                    setProtocolId(protocol.id);
+                    go('overview');
+                  }}
+                >
+                  <td className="mono accent-text">{protocol.id}</td>
+                  <td>{protocol.sponsor}</td>
+                  <td className="mono">{protocol.phase}</td>
+                  <td>{protocol.indication}</td>
+                  <td className="mono muted">{protocol.geo.join(' / ')}</td>
+                  <td>
+                    <Badge tone={protocol.statusTone}>{protocol.status}</Badge>
+                  </td>
+                  <td className="num muted">{protocol.updated}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={7} className="muted">
+                  No protocols found in the database.
                 </td>
-                <td className="num muted">{protocol.updated}</td>
               </tr>
-            ))}
+            )}
           </tbody>
         </table>
       </Panel>
@@ -1854,7 +1897,7 @@ function StageGate({
   activeProtocol,
   go,
 }: {
-  activeProtocol: (typeof protocols)[number];
+  activeProtocol: DashboardProtocol;
   go: (s: ScreenKey) => void;
 }) {
   const activeStage = activeProtocol.stages.find((stage) => stage.state === 'active');
@@ -1884,7 +1927,7 @@ function VoicePanel({
   activeProtocol,
   onClose,
 }: {
-  activeProtocol: (typeof protocols)[number];
+  activeProtocol: DashboardProtocol;
   onClose: () => void;
 }) {
   const [activeQuestion, setActiveQuestion] = useState(voiceQa[0].q);
@@ -1962,21 +2005,65 @@ function VoicePanel({
   );
 }
 
+function NoProtocolsScreen() {
+  return (
+    <div className="page">
+      <Panel>
+        <div className="empty">
+          <span className="empty__icon">
+            <Database size={22} />
+          </span>
+          <h2>No protocol selected</h2>
+          <p>
+            Add protocol records to the database or upload a Phase 3 protocol before opening the
+            processing workspace.
+          </p>
+          <Link href="/dashboard?screen=protocols&upload=1" className="action action--primary">
+            <Upload size={14} />
+            Upload protocol
+          </Link>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 export function MedicalAffairsDashboard({
   initialScreen = 'overview',
   initialUploadOpen = false,
+  protocols,
+  protocolLoadError = null,
 }: {
   initialScreen?: ScreenKey;
   initialUploadOpen?: boolean;
+  protocols?: DashboardProtocol[];
+  protocolLoadError?: string | null;
 }) {
+  const dashboardProtocols = protocols ?? demoProtocols;
   const [screen, setScreen] = useState<ScreenKey>(initialScreen);
-  const [protocolId, setProtocolId] = useState(protocols[0].id);
+  const [protocolId, setProtocolId] = useState(dashboardProtocols[0]?.id ?? '');
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(initialUploadOpen);
   const activeProtocol = useMemo(
-    () => protocols.find((protocol) => protocol.id === protocolId) ?? protocols[0],
-    [protocolId]
+    () =>
+      dashboardProtocols.find((protocol) => protocol.id === protocolId) ??
+      dashboardProtocols[0] ??
+      null,
+    [dashboardProtocols, protocolId]
   );
+
+  useEffect(() => {
+    if (!dashboardProtocols.length) {
+      if (protocolId) {
+        setProtocolId('');
+      }
+      return;
+    }
+
+    if (!dashboardProtocols.some((protocol) => protocol.id === protocolId)) {
+      setProtocolId(dashboardProtocols[0].id);
+    }
+  }, [dashboardProtocols, protocolId]);
 
   useEffect(() => {
     setScreen(initialScreen);
@@ -1991,16 +2078,25 @@ export function MedicalAffairsDashboard({
     window.history.pushState(null, '', `/dashboard?screen=${nextScreen}`);
   };
   const isLibrary = screen === 'protocols' || screen === 'runs';
-  const isCompleteDemo = activeProtocol.id === 'RSV-PreF-301';
+  const isCompleteDemo = activeProtocol?.id === 'RSV-PreF-301';
 
   function renderScreen() {
     if (screen === 'protocols') {
       return (
-        <ProtocolsScreen activeProtocolId={protocolId} setProtocolId={setProtocolId} go={go} />
+        <ProtocolsScreen
+          activeProtocolId={protocolId}
+          protocols={dashboardProtocols}
+          protocolLoadError={protocolLoadError}
+          setProtocolId={setProtocolId}
+          go={go}
+        />
       );
     }
     if (screen === 'runs') {
       return <RunsScreen go={go} />;
+    }
+    if (!activeProtocol) {
+      return <NoProtocolsScreen />;
     }
     if (!isCompleteDemo && screen !== 'overview') {
       return <StageGate activeProtocol={activeProtocol} go={go} />;
@@ -2024,7 +2120,7 @@ export function MedicalAffairsDashboard({
         return <SummaryScreen />;
       case 'overview':
       default:
-        return <OverviewScreen go={go} />;
+        return <OverviewScreen activeProtocol={activeProtocol} go={go} />;
     }
   }
 
@@ -2063,15 +2159,16 @@ export function MedicalAffairsDashboard({
           <div className="side__foot">
             Veritan Biologics
             <br />
-            Medical Affairs / {activeProtocol.run ?? 'queued'}
+            Medical Affairs / {activeProtocol?.run ?? 'no protocol'}
           </div>
         </aside>
 
         <main className="main">
-          {!isLibrary ? (
+          {!isLibrary && activeProtocol ? (
             <>
               <ProtocolHeader
                 activeProtocol={activeProtocol}
+                protocols={dashboardProtocols}
                 protocolId={protocolId}
                 setProtocolId={setProtocolId}
                 voiceOpen={voiceOpen}
@@ -2084,15 +2181,22 @@ export function MedicalAffairsDashboard({
         </main>
 
         {voiceOpen ? (
-          <VoicePanel activeProtocol={activeProtocol} onClose={() => setVoiceOpen(false)} />
+          activeProtocol ? (
+            <VoicePanel activeProtocol={activeProtocol} onClose={() => setVoiceOpen(false)} />
+          ) : null
         ) : null}
         {uploadOpen ? (
           <UploadProtocolModal
+            sampleProtocol={activeProtocol ?? dashboardProtocols[0] ?? demoProtocols[0]}
             onClose={() => setUploadOpen(false)}
             onComplete={() => {
               setUploadOpen(false);
-              setProtocolId(protocols[0].id);
-              setScreen('brief');
+              if (dashboardProtocols[0]) {
+                setProtocolId(dashboardProtocols[0].id);
+                setScreen('brief');
+              } else {
+                setScreen('protocols');
+              }
             }}
           />
         ) : null}

@@ -27,6 +27,11 @@
     "lint:frontend": "pnpm --dir frontend lint",
     "lint:agent-py": "uv --directory agent-py run ruff check .",
     "format": "pnpm --dir frontend format && uv --directory agent-py run ruff format .",
+    "prisma:generate": "pnpm --dir frontend prisma:generate",
+    "prisma:validate": "pnpm --dir frontend prisma:validate",
+    "prisma:studio": "pnpm --dir frontend prisma:studio",
+    "db:push": "pnpm --dir frontend db:push",
+    "db:migrate": "pnpm --dir frontend db:migrate",
 
     "test": "pnpm test:agent-py",
     "test:agent-py": "uv --directory agent-py run pytest"
