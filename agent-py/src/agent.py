@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import textwrap
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,14 @@ MOSS_NOT_CONFIGURED_MESSAGE = (
     "Moss is not configured yet. Add MOSS_PROJECT_ID and MOSS_PROJECT_KEY "
     "to agent-py/.env.local to enable knowledge search and memory."
 )
+LIVEKIT_LLM_MODEL = os.getenv("LIVEKIT_LLM_MODEL", "openai/gpt-5.2-chat-latest")
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _display_value(value: Any) -> str | None:
@@ -132,7 +141,7 @@ class Assistant(Agent):
             # The LLM (the agent's brain) runs on LiveKit Inference — no
             # provider API key required. STT/TTS are configured on the
             # AgentSession below. See https://docs.livekit.io/agents/models/llm/
-            llm=inference.LLM(model="openai/gpt-5.2-chat-latest"),
+            llm=inference.LLM(model=LIVEKIT_LLM_MODEL),
             instructions=textwrap.dedent(
                 """\
                 You are KOL Copilot, a protocol-aware Medical Affairs co-pilot
@@ -150,11 +159,12 @@ class Assistant(Agent):
 
                 # Primary workflow
 
-                - For ANY request about KOLs, KEEs, investigators, sites,
-                  Medical Affairs, MSLs, Phase 3 protocols, protocol parsing,
-                  expert ranking, evidence, compliant next actions, expert
-                  comparisons, or MSL pre-call briefs, ALWAYS call
-                  `answer_kol_question` before answering.
+                - For KOL discovery, investigator or site ranking, protocol
+                  parsing, evidence-backed next actions, expert comparisons, or
+                  MSL pre-call brief generation, call `answer_kol_question`
+                  before answering.
+                - Answer simple setup, status, navigation, or clarification
+                  questions directly when no retrieval or ranking is needed.
                 - Summarize the tool result briefly for voice. The UI receives
                   the structured KOL cards, citations, rationale, compliance
                   notes, and brief details separately.
@@ -343,11 +353,21 @@ class Assistant(Agent):
         """
         from kol_copilot.runner import run_kol_query, voice_summary
 
+        started = time.perf_counter()
+        voice_fast_path = _env_flag("KOL_COPILOT_VOICE_FAST_PATH", True)
         result = await run_kol_query(
             query,
             user_id=self._user_id,
             protocol_id=self._protocol_id,
             conversation_id=f"{self._user_id}:{self._protocol_id}",
+            prefer_local=voice_fast_path,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "KOL Copilot voice tool completed in %.1f ms (fast_path=%s, protocol_id=%s)",
+            elapsed_ms,
+            voice_fast_path,
+            self._protocol_id,
         )
         await self._publish_kol_result(result)
         return voice_summary(result)

@@ -1,3 +1,4 @@
+import builtins
 from typing import ClassVar
 
 import pytest
@@ -77,6 +78,30 @@ async def test_run_kol_query_falls_back_without_openai_key(monkeypatch) -> None:
     assert result.compliance_notes[0].severity == "info"
     assert "fallback" in " ".join(result.audit_trail).lower()
     assert "prescribing" not in result.top_kols[0].suggested_next_action.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_kol_query_prefer_local_bypasses_agents_sdk(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("MOSS_PROJECT_ID", raising=False)
+    monkeypatch.delenv("MOSS_PROJECT_KEY", raising=False)
+    real_import = builtins.__import__
+
+    def fail_agents_import(name, *args, **kwargs):
+        if name == "agents" or name.startswith("agents."):
+            raise AssertionError("prefer_local should bypass the Agents SDK")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_agents_import)
+
+    result = await run_kol_query(
+        "Find top infectious disease KOLs for this COVID vaccine protocol.",
+        user_id="user_test",
+        prefer_local=True,
+    )
+
+    assert result.top_kols
+    assert "fast path" in " ".join(result.audit_trail).lower()
 
 
 @pytest.mark.asyncio

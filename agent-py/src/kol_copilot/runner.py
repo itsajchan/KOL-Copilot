@@ -74,14 +74,27 @@ async def run_kol_query(
     user_id: str = "anonymous",
     protocol_profile: ProtocolProfile | None = None,
     conversation_id: str | None = None,
+    prefer_local: bool = False,
 ) -> KolQueryResult:
     """Run the OpenAI Agents KOL workflow.
 
     The runner is intentionally callable in-process from LiveKit. When
-    ``OPENAI_API_KEY`` is absent, or the Agents SDK is unavailable, it returns a
-    deterministic fallback result so the hackathon demo can still render KOL
-    cards and compliance notes.
+    ``prefer_local`` is true, ``OPENAI_API_KEY`` is absent, or the Agents SDK is
+    unavailable, it returns a deterministic local result so the hackathon demo
+    can still render KOL cards and compliance notes.
     """
+
+    if prefer_local:
+        return await _fallback_kol_query_result(
+            user_text,
+            user_id=user_id,
+            protocol_id=protocol_id,
+            protocol_profile=protocol_profile,
+            audit_reason=(
+                "Voice fast path bypassed the nested OpenAI Agents SDK for "
+                "lower latency."
+            ),
+        )
 
     if not os.getenv("OPENAI_API_KEY"):
         return await _fallback_kol_query_result(
