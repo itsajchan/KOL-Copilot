@@ -12,6 +12,7 @@ import {
 } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { ConnectionState, TokenSource } from 'livekit-client';
 import {
   AlertTriangle,
   BarChart3,
@@ -39,6 +40,20 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import {
+  useAgent,
+  useSession,
+  useSessionContext,
+  useSessionMessages,
+} from '@livekit/components-react';
+import { AgentChatTranscript } from '@/components/agents-ui/agent-chat-transcript';
+import {
+  AgentControlBar,
+  type AgentControlBarControls,
+} from '@/components/agents-ui/agent-control-bar';
+import { AgentSessionProvider } from '@/components/agents-ui/agent-session-provider';
+import { MossResultsPanel } from '@/components/app/moss-results-panel';
+import { useMossContextEvents } from '@/hooks/useMossContextEvents';
 import styles from './medical-affairs-dashboard.module.css';
 
 const LOGO_SRC = '/kol-copilot-logo-mark.svg';
@@ -63,6 +78,7 @@ type DashboardIcon = typeof AlertTriangle;
 type UploadPhase = 'idle' | 'invalid' | 'uploading' | 'parsing' | 'ready' | 'error';
 type UploadProtocolFile = { name: string; sizeMB: number; ext: string };
 type Stage = { key: string; label: string; state: State; detail: string };
+type VoiceCallState = 'closed' | 'starting' | 'live' | 'ended' | 'error';
 
 export type DashboardProtocol = {
   id: string;
@@ -1367,6 +1383,7 @@ function ProtocolHeader({
   setProtocolId,
   voiceOpen,
   setVoiceOpen,
+  voiceCallState,
 }: {
   activeProtocol: DashboardProtocol;
   protocols: DashboardProtocol[];
@@ -1374,8 +1391,21 @@ function ProtocolHeader({
   setProtocolId: (id: string) => void;
   voiceOpen: boolean;
   setVoiceOpen: (open: boolean) => void;
+  voiceCallState: VoiceCallState;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const voiceLabel =
+    voiceCallState === 'live'
+      ? 'Call live'
+      : voiceCallState === 'starting'
+        ? 'Starting'
+        : voiceCallState === 'error'
+          ? 'Voice error'
+          : voiceCallState === 'ended'
+            ? 'Call ended'
+            : voiceOpen
+              ? 'Voice on'
+              : 'Ask copilot';
 
   return (
     <div className="phead">
@@ -1439,7 +1469,7 @@ function ProtocolHeader({
           onClick={() => setVoiceOpen(!voiceOpen)}
         >
           <Mic size={15} />
-          {voiceOpen ? 'Voice on' : 'Ask copilot'}
+          {voiceLabel}
         </button>
         <Badge tone={activeProtocol.statusTone}>{activeProtocol.status}</Badge>
         <div className="phead__ts">Updated {activeProtocol.updated}</div>
@@ -1519,8 +1549,8 @@ function OverviewScreen({
       {pipelineData.isFallback ? (
         <div className="stack stack--tight">
           <Note tone="compliance" icon="alert">
-            Demo fallback data is visible because fallback analysis mode is enabled. These KOLs
-            are not presented as researched OpenAI Agents SDK output.
+            Demo fallback data is visible because fallback analysis mode is enabled. These KOLs are
+            not presented as researched OpenAI Agents SDK output.
           </Note>
         </div>
       ) : null}
@@ -1951,38 +1981,38 @@ function CandidatesScreen({ pipelineData }: { pipelineData: DashboardPipelineDat
           </Note>
         </Panel>
       ) : (
-      <Panel noBody>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Rank</th>
-              <th>Name</th>
-              <th>Institution</th>
-              <th>Specialty</th>
-              <th>Geography</th>
-              <th className="num">Sources</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pipelineData.candidates.map((candidate) => (
-              <tr key={candidate.id}>
-                <td className="mono">#{candidate.rank}</td>
-                <td className="accent-text">{candidate.name}</td>
-                <td>{candidate.institution}</td>
-                <td>{candidate.specialty}</td>
-                <td className="mono muted">{candidate.geo}</td>
-                <td className="num">{candidate.sources}</td>
-                <td>
-                  <Badge tone={candidate.status === 'validated' ? 'safe' : 'compliance'}>
-                    {candidate.status}
-                  </Badge>
-                </td>
+        <Panel noBody>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Name</th>
+                <th>Institution</th>
+                <th>Specialty</th>
+                <th>Geography</th>
+                <th className="num">Sources</th>
+                <th>Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
+            </thead>
+            <tbody>
+              {pipelineData.candidates.map((candidate) => (
+                <tr key={candidate.id}>
+                  <td className="mono">#{candidate.rank}</td>
+                  <td className="accent-text">{candidate.name}</td>
+                  <td>{candidate.institution}</td>
+                  <td>{candidate.specialty}</td>
+                  <td className="mono muted">{candidate.geo}</td>
+                  <td className="num">{candidate.sources}</td>
+                  <td>
+                    <Badge tone={candidate.status === 'validated' ? 'safe' : 'compliance'}>
+                      {candidate.status}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
       )}
     </div>
   );
@@ -2191,14 +2221,193 @@ function VoicePanel({
   activeProtocol,
   pipelineData,
   onClose,
+  onCallStateChange,
 }: {
   activeProtocol: DashboardProtocol;
   pipelineData: DashboardPipelineData;
   onClose: () => void;
+  onCallStateChange: (state: VoiceCallState) => void;
+}) {
+  const tokenSource = useMemo(() => {
+    return TokenSource.custom(async (options) => {
+      const roomConfig =
+        options.agentName || options.agentMetadata
+          ? {
+              agents: [
+                {
+                  agent_name: options.agentName ?? '',
+                  metadata: options.agentMetadata,
+                },
+              ],
+            }
+          : undefined;
+
+      const response = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          protocol_id: activeProtocol.id,
+          protocol_context: protocolContextPayload(activeProtocol),
+          room_config: roomConfig,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      return response.json();
+    });
+  }, [activeProtocol]);
+  const session = useSession(tokenSource);
+
+  return (
+    <AgentSessionProvider session={session}>
+      <VoicePanelSession
+        activeProtocol={activeProtocol}
+        pipelineData={pipelineData}
+        onClose={onClose}
+        onCallStateChange={onCallStateChange}
+      />
+    </AgentSessionProvider>
+  );
+}
+
+function protocolContextPayload(protocol: DashboardProtocol) {
+  return {
+    id: protocol.id,
+    nct: protocol.nct,
+    title: protocol.title,
+    sponsor: protocol.sponsor,
+    phase: protocol.phase,
+    indication: protocol.indication,
+    geography: protocol.geo,
+    enrollment: protocol.enrollment,
+    status: protocol.status,
+  };
+}
+
+function voiceStateLabel(connectionState: ConnectionState, isConnected: boolean) {
+  if (isConnected) {
+    return 'Live call';
+  }
+  if (connectionState === ConnectionState.Connecting) {
+    return 'Starting call';
+  }
+  if (connectionState === ConnectionState.Reconnecting) {
+    return 'Reconnecting';
+  }
+  return 'Call ready';
+}
+
+function VoicePanelSession({
+  activeProtocol,
+  pipelineData,
+  onClose,
+  onCallStateChange,
+}: {
+  activeProtocol: DashboardProtocol;
+  pipelineData: DashboardPipelineData;
+  onClose: () => void;
+  onCallStateChange: (state: VoiceCallState) => void;
 }) {
   const [activeQuestion, setActiveQuestion] = useState(pipelineData.voiceQa[0].q);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [startError, setStartError] = useState('');
+  const startRef = useRef<ReturnType<typeof useSessionContext>['start'] | null>(null);
+  const endRef = useRef<ReturnType<typeof useSessionContext>['end'] | null>(null);
+  const hasConnectedRef = useRef(false);
+  const session = useSessionContext();
+  const { messages } = useSessionMessages(session);
+  const { state: agentState } = useAgent();
+  const mossEvents = useMossContextEvents();
   const answer =
     pipelineData.voiceQa.find((item) => item.q === activeQuestion) ?? pipelineData.voiceQa[0];
+  const controls: AgentControlBarControls = {
+    leave: true,
+    microphone: true,
+    chat: true,
+    camera: false,
+    screenShare: false,
+  };
+
+  useEffect(() => {
+    startRef.current = session.start;
+    endRef.current = session.end;
+  }, [session.end, session.start]);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    let isCancelled = false;
+
+    setStartError('');
+    onCallStateChange('starting');
+    void startRef
+      .current?.({
+        signal: abortController.signal,
+        tracks: {
+          microphone: { enabled: true },
+        },
+      })
+      .then(() => {
+        if (!isCancelled) {
+          onCallStateChange('live');
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCancelled) {
+          return;
+        }
+        setStartError(error instanceof Error ? error.message : 'Could not start LiveKit call.');
+        onCallStateChange('error');
+      });
+
+    return () => {
+      isCancelled = true;
+      abortController.abort();
+      void endRef.current?.();
+      onCallStateChange('closed');
+    };
+  }, [activeProtocol.id, onCallStateChange]);
+
+  useEffect(() => {
+    if (session.isConnected) {
+      hasConnectedRef.current = true;
+      onCallStateChange('live');
+      return;
+    }
+
+    if (session.connectionState === ConnectionState.Connecting) {
+      onCallStateChange('starting');
+      return;
+    }
+
+    if (
+      session.connectionState === ConnectionState.Disconnected &&
+      hasConnectedRef.current &&
+      !startError
+    ) {
+      onCallStateChange('ended');
+    }
+  }, [onCallStateChange, session.connectionState, session.isConnected, startError]);
+
+  const restartCall = () => {
+    setStartError('');
+    onCallStateChange('starting');
+    void startRef
+      .current?.({
+        tracks: {
+          microphone: { enabled: true },
+        },
+      })
+      .then(() => {
+        onCallStateChange('live');
+      })
+      .catch((error: unknown) => {
+        setStartError(error instanceof Error ? error.message : 'Could not start LiveKit call.');
+        onCallStateChange('error');
+      });
+  };
 
   return (
     <aside className="voicepanel" aria-label="Voice copilot">
@@ -2212,6 +2421,9 @@ function VoicePanel({
             Scoped to <b>{activeProtocol.id}</b>
           </p>
         </div>
+        <span className={`voicepanel__status ${session.isConnected ? 'is-live' : ''}`}>
+          {voiceStateLabel(session.connectionState, session.isConnected)}
+        </span>
         <button type="button" className="iconbtn" aria-label="Close voice panel" onClick={onClose}>
           <X size={16} />
         </button>
@@ -2221,11 +2433,51 @@ function VoicePanel({
           <Mic size={18} />
         </span>
         <div>
-          <div className="voice-control__status">Listening / 0:12</div>
-          <div className="voice-control__transcript">Ask a protocol-aware KOL question</div>
+          <div className="voice-control__status">
+            {session.isConnected
+              ? `Listening / ${agentState}`
+              : voiceStateLabel(session.connectionState, false)}
+          </div>
+          <div className="voice-control__transcript">
+            {session.isConnected
+              ? `${activeProtocol.indication} / ${activeProtocol.phase}`
+              : 'Preparing protocol-aware KOL call'}
+          </div>
         </div>
       </div>
       <div className="voicepanel__body">
+        {startError ? (
+          <div className="voice-error" role="alert">
+            <AlertTriangle size={15} />
+            <span>{startError}</span>
+          </div>
+        ) : null}
+        <div className="live-session">
+          <div className="live-session__meta">
+            <span>{session.isConnected ? 'LiveKit room connected' : 'Connecting to LiveKit'}</span>
+            <b>{activeProtocol.title}</b>
+          </div>
+          <AgentControlBar
+            variant="livekit"
+            controls={controls}
+            isChatOpen={chatOpen}
+            isConnected={session.isConnected}
+            onDisconnect={() => {
+              void session.end();
+              onCallStateChange('ended');
+            }}
+            onIsChatOpenChange={setChatOpen}
+            className="voice-controlbar"
+          />
+          {chatOpen ? (
+            <AgentChatTranscript
+              agentState={agentState}
+              messages={messages}
+              className="voice-transcript"
+            />
+          ) : null}
+          <MossResultsPanel events={mossEvents} className="voice-moss" />
+        </div>
         <div className="suggestions">
           {pipelineData.voiceQa.map((item) => (
             <button
@@ -2262,8 +2514,19 @@ function VoicePanel({
       </div>
       <div className="voicepanel__foot">
         <div className="vinput">
-          <span>Ask about ranking, evidence, citations, or MSL brief prep</span>
-          <button type="button" aria-label="Start voice input">
+          <span>
+            {session.isConnected
+              ? 'Microphone active for protocol-scoped questions'
+              : startError
+                ? 'Voice call failed'
+                : 'Voice call initializing'}
+          </span>
+          <button
+            type="button"
+            aria-label="Start voice input"
+            disabled={session.isConnected || session.connectionState === ConnectionState.Connecting}
+            onClick={restartCall}
+          >
             <Mic size={16} />
           </button>
         </div>
@@ -2316,6 +2579,7 @@ export function MedicalAffairsDashboard({
     initialProtocolId ?? dashboardProtocols[0]?.id ?? ''
   );
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceCallState, setVoiceCallState] = useState<VoiceCallState>('closed');
   const [uploadOpen, setUploadOpen] = useState(initialUploadOpen);
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
@@ -2508,6 +2772,7 @@ export function MedicalAffairsDashboard({
                 setProtocolId={setProtocolId}
                 voiceOpen={voiceOpen}
                 setVoiceOpen={setVoiceOpen}
+                voiceCallState={voiceCallState}
               />
               <StageRail stages={activeProtocol.stages} />
             </>
@@ -2518,9 +2783,11 @@ export function MedicalAffairsDashboard({
         {voiceOpen ? (
           activeProtocol ? (
             <VoicePanel
+              key={activeProtocol.id}
               activeProtocol={activeProtocol}
               pipelineData={activePipelineData}
               onClose={() => setVoiceOpen(false)}
+              onCallStateChange={setVoiceCallState}
             />
           ) : null
         ) : null}

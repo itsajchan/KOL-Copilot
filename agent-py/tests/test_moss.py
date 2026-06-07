@@ -131,6 +131,26 @@ async def test_search_knowledge_returns_joined_text_and_publishes_context(
     assert matches[1]["text"] == "Second snippet."
 
 
+def test_assistant_instructions_include_protocol_context(stub_moss) -> None:
+    """The LiveKit room metadata should scope the agent to the selected protocol."""
+    assistant = Assistant(
+        user_id=USER_ID,
+        protocol_id="LN-NEPH-301",
+        protocol_context={
+            "title": "Lupus nephritis induction therapy Phase 3 protocol",
+            "indication": "lupus nephritis",
+            "phase": "Phase 3",
+            "geography": ["United States", "Canada"],
+            "relevantSpecialties": ["nephrology", "rheumatology"],
+        },
+    )
+
+    assert "Current protocol context" in assistant.instructions
+    assert "LN-NEPH-301" in assistant.instructions
+    assert "lupus nephritis" in assistant.instructions
+    assert "nephrology, rheumatology" in assistant.instructions
+
+
 async def test_remember_fact_adds_doc_with_user_metadata(stub_moss) -> None:
     """remember_fact upserts a memory doc tagged with the caller's user_id."""
     assistant = Assistant(user_id=USER_ID)
