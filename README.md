@@ -1,149 +1,172 @@
-# Moss Hacker Starter — LiveKit voice agent + Moss RAG & memory
+# KOL Copilot
 
-A voice AI starter that pairs the official **[LiveKit](https://livekit.io) Agents** stack with
-**[Moss](https://usemoss.dev)** for retrieval. Talk to a "LiveKit docs helper" in the browser; it
-answers grounded in a Moss knowledge base (RAG) and remembers facts you tell it (agentic memory),
-scoped per user.
+KOL Copilot is a hackathon MVP for a protocol-aware Medical Affairs co-pilot. It helps pharma Medical Affairs and late-stage Clinical Development teams identify, rank, and prepare compliant engagement with relevant KOLs, investigators, sites, and medical experts for Phase 3 and launch-readiness programs.
 
-Built entirely on the official LiveKit starter templates — `agent-starter-python` and
-`agent-starter-react` — adapted for Moss. The starters are the source of truth for current LiveKit
-idioms.
+The product answers:
 
-## What you get
+> Given this clinical trial protocol, who are the most relevant KOLs, investigators, sites, and medical experts, why do they matter, and what compliant action should the Medical Affairs team take next?
 
-- **Voice agent** (`agent-py/`) — a Python LiveKit agent (`AgentServer` + `@server.rtc_session`)
-  with Moss tools plus a KOL Copilot bridge:
-  - `search_knowledge` — semantic search (RAG) over the static **`knowledge`** Moss index.
-  - `remember_fact` — writes a fact to the **`memory`** Moss index, tagged with your `user_id`.
-  - `recall_facts` — reads back *your* facts only, via a per-user metadata filter.
-  - `answer_kol_question` — calls the OpenAI Agents KOL workflow and publishes a structured
-    `kol_result` data event for ranked KOL cards, citations, and compliance notes.
-- **Frontend** (`frontend/`) — the React/Next.js starter, rebranded as the "Moss LiveKit Docs
-  Helper", with a live **Knowledge Matches** panel that shows the retrieved chunks and relevance
-  scores in real time as the agent searches.
-- **Indexer** (`agent-py/src/create_index.py`) — builds both Moss indexes from
-  `agent-py/knowledge.json`.
-- **KOL Copilot workflow** (`agent-py/src/kol_copilot/`) — a framework-neutral OpenAI Agents SDK
-  package for protocol-aware KOL discovery. LiveKit calls it in-process for voice turns, and the
-  optional FastAPI app exposes the same runner at `/kol/query`.
+The demo is built around a realtime voice workflow: a user discusses a Phase 3 protocol naturally, the agent retrieves expert evidence, ranks relevant KOLs, streams structured results to the UI, and can draft a compliant MSL pre-call brief.
 
-### Credentials
+## Demo Workflow
 
-You need **LiveKit** and **Moss** credentials for the original voice/RAG flow. Speech-to-text, the
-LiveKit session LLM, and text-to-speech all run through
-**[LiveKit Inference](https://docs.livekit.io/agents/models/)**.
+1. Upload or select a Phase 3 protocol PDF.
+2. Extract protocol attributes such as indication, intervention, phase, patient population, geography, endpoints, inclusion/exclusion criteria, and relevant specialties.
+3. Ask a voice question:
 
-The KOL Copilot workflow can additionally use `OPENAI_API_KEY` for the OpenAI Agents SDK. If that
-key is not set, it falls back to deterministic synthetic KOL evidence so the demo can still render
-ranked KOL cards, citations, and compliance notes before the expert Moss index is populated.
+   > Find the top infectious disease KOLs for this protocol. Prioritize vaccine trial experience, immunogenicity publications, and adult COVID study relevance.
+
+4. Retrieve relevant expert evidence from protocol chunks, expert profiles, publication snippets, trial records, and supporting sources.
+5. Rank experts with an explainable scoring model.
+6. Display ranked KOL cards with citations, rationale, score breakdowns, and compliance notes.
+7. Ask follow-ups such as:
+
+   > Why is Dr. X ranked above Dr. Y?
+
+8. Generate a compliant MSL pre-call brief with scientific background, source citations, suggested non-promotional questions, and compliance warnings.
 
 ## Architecture
 
-```
-  ┌──────────────────────┐         ┌────────────────────────────┐
-  │  Browser frontend     │  WebRTC │   LiveKit Cloud             │
-  │  (Next.js, frontend/) │◀───────▶│   • media transport         │
-  │  • mic / audio         │  data   │   • Inference: STT/LLM/TTS  │
-  │  • Knowledge Matches   │  packets│   • agent dispatch          │
-  └──────────┬───────────┘         └─────────────┬──────────────┘
-             │  POST /api/token                    │ dispatch (agent_name="agent-py",
-             │  → mints lk_moss_user cookie         │            metadata {"user_id": …})
-             │  → stamps {"user_id"} as dispatch    │
-             │     metadata                          ▼
-             │                          ┌────────────────────────────┐
-             │   moss_context data ◀────│  Python voice agent         │
-             └──────── packets ─────────│  (agent-py/, AgentServer)   │
-                                        │  search_knowledge / remember │
-                                        │  _fact / recall_facts        │
-                                        └─────────────┬──────────────┘
-                                                      │  Moss SDK
-                                                      ▼
-                                        ┌────────────────────────────┐
-                                        │  Moss                       │
-                                        │  • knowledge index (RAG)    │
-                                        │  • memory  index (per-user) │
-                                        └────────────────────────────┘
+![KOL Copilot architecture](./KOLCopilot-Arch.png)
+
+```text
+Frontend
+  - Next.js voice interface
+  - protocol upload and dashboard
+  - live ranked KOL cards
+  - evidence drawer
+  - compliance panel
+
+Voice + Agent Runtime
+  - LiveKit realtime audio session
+  - Python LiveKit agent
+  - OpenAI Agents KOL workflow
+  - structured data events for UI updates
+
+Backend / Workflow
+  - protocol-aware query runner
+  - retrieval orchestration
+  - expert ranking
+  - compliance checker
+  - MSL brief generator
+  - optional FastAPI endpoint at /kol/query
+
+Knowledge Base
+  - Moss protocol index
+  - Moss expert index
+  - trial records
+  - publication snippets
+  - payment/transparency snippets
+  - guideline/congress snippets
 ```
 
-The frontend's token route (`frontend/app/api/token/route.ts`) sets an httpOnly `lk_moss_user`
-cookie (a random UUID) on first visit and stamps `{"user_id": "<uuid>"}` into the agent's dispatch
-metadata. The agent reads it from `ctx.job.metadata` and uses it to scope memory reads/writes, so
-each browser gets its own private memory that persists across reconnects.
+The browser connects to LiveKit for realtime audio. LiveKit dispatches the Python agent in `agent-py/`, which can call Moss retrieval tools and the in-process KOL Copilot runner. The runner emits structured `kol_result` data events so the Next.js UI can update ranked cards, citations, and compliance notes without waiting for a static final answer.
 
-## Repository layout
+## Repository Layout
 
+```text
+KOL-Copilot-Hackathon/
+├── KOLCopilot-Arch.png        # architecture diagram referenced above
+├── AGENTS.md                  # product brief and project instructions
+├── agent-py/                  # Python LiveKit voice agent and KOL workflow
+│   ├── src/agent.py           # LiveKit agent, Moss tools, KOL bridge
+│   ├── src/create_index.py    # Moss index creation and seeding
+│   └── src/kol_copilot/       # protocol-aware KOL workflow package
+│       ├── runner.py          # main query runner used by voice and API paths
+│       ├── api.py             # optional FastAPI endpoint
+│       ├── agents.py          # OpenAI Agents definitions
+│       ├── tools.py           # retrieval and workflow tools
+│       └── schemas.py         # structured result models
+├── frontend/                  # Next.js realtime voice and KOL UI
+│   ├── app/                   # app routes, dashboard, token endpoint
+│   ├── components/app/        # app shell, landing, Moss/KOL result panels
+│   └── hooks/                 # LiveKit and Moss data-event hooks
+└── package.json               # root scripts for setup, dev, indexing, tests
 ```
-moss-hacker-starter/
-├── agent-py/                  # Python voice agent (uv-managed)
-│   ├── src/agent.py           #   agent + 3 Moss tools, registered as "agent-py"
-│   ├── src/kol_copilot/       #   OpenAI Agents KOL workflow + optional FastAPI API
-│   ├── src/create_index.py    #   builds the knowledge + memory indexes
-│   ├── knowledge.json         #   RAG seed corpus (~13 LiveKit Q&A entries)
-│   ├── Dockerfile             #   deploy image (CMD: uv run src/agent.py start)
-│   └── .env.local             #   LIVEKIT_* (auto) + MOSS_* (you paste)
-├── frontend/                  # Next.js app (pnpm-managed)
-│   ├── app/api/token/route.ts #   token + dispatch metadata + lk_moss_user cookie
-│   ├── app-config.ts          #   branding + AGENT_NAME wiring
-│   ├── hooks/useMossContextEvents.ts          # parses moss_context data packets
-│   └── components/app/moss-results-panel.tsx  # "Knowledge Matches" UI
-│   └── .env.local             #   LIVEKIT_* + AGENT_NAME=agent-py (no Moss vars)
-└── package.json               # root pnpm orchestrator (scripts below)
+
+## Core Components
+
+- **LiveKit:** realtime voice conversation, audio transport, agent dispatch, and session infrastructure.
+- **Moss:** semantic retrieval over protocol chunks, expert profiles, publication snippets, clinical trial records, and evidence snippets.
+- **OpenAI Agents SDK:** protocol-aware KOL workflow, ranking rationale, comparison answers, and MSL brief generation.
+- **Next.js frontend:** voice UI, upload/dashboard surface, live KOL cards, evidence context, and compliance panel.
+- **FastAPI optional API:** HTTP access to the same KOL runner at `POST /kol/query`.
+
+## Ranking Model
+
+The MVP uses a simple explainable score so every recommendation can be traced back to evidence:
+
+```text
+KOL Score =
+  30% protocol match
++ 25% trial investigator experience
++ 20% publication relevance
++ 10% institution/site relevance
++ 10% congress/guideline influence
++  5% recency
+- compliance/conflict risk adjustments
 ```
+
+The weights can be hardcoded for the hackathon. The important requirement is that each score includes visible evidence and citations.
+
+## Compliance Guardrails
+
+KOL Copilot is Medical Affairs software, not sales targeting software.
+
+Do not produce outputs like:
+
+- "This doctor is likely to prescribe."
+- "Target this physician before approval."
+- "Use this KOL to drive commercial adoption."
+
+Prefer language like:
+
+- "This expert is scientifically relevant to the protocol."
+- "This investigator has related trial experience."
+- "This MSL conversation should remain non-promotional."
+- "Suggested questions are for scientific exchange only."
+
+Required guardrails:
+
+- Medical Affairs mode by default.
+- Citation-required recommendations.
+- No pre-approval promotional language.
+- No prescribing-volume targeting.
+- Clear Medical/Commercial firewall.
+- Audit trail for recommendations.
+- Compliance warning section in generated briefs.
 
 ## Prerequisites
 
-- **Python 3.10+** and **[uv](https://docs.astral.sh/uv/)** (manages the agent's venv).
-- **Node.js 22+** and **[pnpm](https://pnpm.io) 10+**.
-- The **[LiveKit CLI](https://docs.livekit.io/reference/developer-tools/livekit-cli/)** (`lk`),
-  authenticated to a LiveKit Cloud project:
-  ```bash
-  lk cloud auth          # opens a browser to link your project
-  lk project list        # verify a linked project exists
-  ```
-- A **[LiveKit Cloud](https://cloud.livekit.io)** account/project.
-- A **[Moss](https://portal.usemoss.dev)** account (free tier is plenty — see below).
+- Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+- Node.js 22+ and [pnpm](https://pnpm.io) 10+.
+- [LiveKit CLI](https://docs.livekit.io/reference/developer-tools/livekit-cli/) authenticated to a LiveKit Cloud project.
+- LiveKit Cloud account/project.
+- Moss account and API credentials.
+- Optional `OPENAI_API_KEY` for the OpenAI Agents SDK path. Without it, the KOL runner can fall back to deterministic synthetic evidence for demo rendering.
 
-> **Never hand-write LiveKit keys.** All LiveKit setup goes through `lk`, and whenever you touch
-> LiveKit code or config, look up the current API first (`lk docs` or the LiveKit Docs MCP).
+Never hand-write LiveKit keys. Use the LiveKit CLI to write LiveKit environment values.
 
 ## Setup
 
-If you cloned this repo, the two starters and their LiveKit credentials are already in place. If you
-are scaffolding from scratch, the starters are created with the LiveKit CLI:
-
-```bash
-lk app create --template agent-starter-python --install --yes agent-py
-lk app create --template agent-starter-react  --install --yes frontend
-```
-
-**1. Install dependencies and create `.env.local` files:**
+Install dependencies and create local env files:
 
 ```bash
 pnpm setup
 ```
 
-This installs the frontend (`pnpm`), syncs the agent (`uv sync`), and copies `.env.example` →
-`.env.local` for each app if missing.
-
-**2. Write LiveKit credentials** into both apps with the CLI (never typed by hand):
+Write LiveKit credentials into both apps:
 
 ```bash
-lk app env -w agent-py     # reads agent-py/.env.example → writes agent-py/.env.local
-lk app env -w frontend     # reads frontend/.env.example → writes frontend/.env.local
+lk app env -w agent-py
+lk app env -w frontend
 ```
 
-This populates `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` in both files. The
-frontend's `AGENT_NAME` is already set to `agent-py` so the browser explicitly dispatches to this
-agent.
-
-**3. Paste your Moss credentials — the one manual step.** From the
-[Moss portal](https://portal.usemoss.dev), copy your project ID and key into
-`agent-py/.env.local`:
+Add Moss and optional OpenAI credentials to `agent-py/.env.local`:
 
 ```dotenv
 MOSS_PROJECT_ID=your_moss_project_id
 MOSS_PROJECT_KEY=your_moss_project_key
-# defaults below are fine for this starter:
 MOSS_INDEX_NAME=knowledge
 MOSS_MEMORY_INDEX_NAME=memory
 MOSS_PROTOCOL_INDEX_NAME=protocols
@@ -152,34 +175,36 @@ MOSS_MODEL_ID=moss-minilm
 OPENAI_API_KEY=optional_openai_api_key_for_kol_copilot
 ```
 
-The **frontend needs no Moss variables** — only the agent talks to Moss.
+The frontend only needs LiveKit credentials and the agent dispatch name. It does not need Moss credentials.
 
-## Build the Moss indexes
+## Build Indexes
 
 ```bash
 pnpm moss:index
 ```
 
-Runs `agent-py/src/create_index.py`, which creates **both** indexes:
+This runs `agent-py/src/create_index.py` and prepares the Moss indexes used by the realtime workflow. The KOL workflow expects protocol and expert evidence to be available in the configured Moss indexes; for hackathon speed, seed a curated dataset around one indication instead of trying to build a full pharma data warehouse.
 
-- **`knowledge`** — populated from `agent-py/knowledge.json` (the RAG corpus).
-- **`memory`** — seeded with one placeholder doc so it exists before the first runtime write.
+Recommended seed size:
 
-It prints the document counts / job IDs for each. You can confirm the indexes appear in the
-[Moss portal](https://portal.usemoss.dev). (Requires the Moss credentials from setup.)
+- 20-40 expert profiles.
+- 50-150 evidence snippets.
+- ClinicalTrials.gov investigator/site records.
+- PubMed abstracts and publication snippets.
+- Guideline, congress, institution, and transparency snippets where useful.
 
 ## Run
 
-Start the agent and the frontend together:
+Start the voice agent and frontend together:
 
 ```bash
 pnpm dev
 ```
 
-- Frontend: **http://localhost:3000** — click **Start call**, allow the mic, and talk.
-- The agent connects to LiveKit Cloud and waits for the browser to dispatch it.
+- Frontend: http://localhost:3000
+- Python LiveKit agent: `agent-py`, dispatched by the frontend token route.
 
-No-frontend smoke test (talk to the agent in your terminal):
+No-frontend terminal smoke test:
 
 ```bash
 pnpm agent:py:console
@@ -200,96 +225,62 @@ Then POST to `http://localhost:8000/kol/query`:
 }
 ```
 
-The LiveKit worker does not need this API for voice. It imports `kol_copilot.runner.run_kol_query`
-directly to avoid adding HTTP latency to the realtime path.
+The LiveKit worker does not need the HTTP API for voice. It imports `kol_copilot.runner.run_kol_query` directly to keep the realtime path low-latency.
 
-## Try it — the three tools
+## Reference Protocol
 
-With `pnpm dev` running, connect at http://localhost:3000 and:
+The initial reference protocol is the Pfizer/BioNTech BNT162b2 Phase 3 COVID-19 vaccine protocol:
 
-1. **RAG / `search_knowledge`** — ask a docs question, e.g.
-   *"How does turn detection work in LiveKit?"*
-   The agent searches the `knowledge` index, answers grounded in the snippets, and the
-   **Knowledge Matches** panel fills in with the retrieved chunks + relevance scores.
-2. **Write memory / `remember_fact`** — say
-   *"Remember that I prefer Cartesia for text-to-speech."*
-   The agent stores the fact tagged with your `user_id`.
-3. **Read memory / `recall_facts`** — ask
-   *"What's my TTS preference?"*
-   The agent recalls *your* facts only (per-user metadata filter) and answers from them.
+- ClinicalTrials.gov document: `https://cdn.clinicaltrials.gov/large-docs/69/NCT04816669/Prot_000.pdf`
+- Trial: Pfizer/BioNTech BNT162b2 COVID-19 vaccine
+- Phase: 3
+- Indication: COVID-19 prevention
+- Intervention: BNT162b2 RNA-based COVID-19 vaccine
+- Population: healthy adults 18-55
+- Focus areas: safety, tolerability, immunogenicity
+- Relevant specialties: infectious disease, vaccinology, immunology, clinical trial investigators
 
-Because the `lk_moss_user` cookie is httpOnly and long-lived, your memory persists across reloads
-and reconnects — the same browser keeps the same `user_id`.
+For a more pharma/KOL-friendly demo, a synthetic Phase 3 protocol in oncology, lupus nephritis, obesity, or Alzheimer's disease is also acceptable.
 
-## Test & lint
+## Test, Lint, Format
 
 ```bash
-pnpm test    # pytest (agent-py)
-pnpm lint    # ruff (agent-py) + next lint (frontend)
-pnpm format  # prettier (frontend) + ruff format (agent-py)
+pnpm test
+pnpm lint
+pnpm format
 ```
 
-## Deploy
-
-The frontend's `/api/token` route is **development-only** (it throws in production) — deploy it
-behind your own auth before shipping. The agent deploys to **LiveKit Cloud** straight from its
-Dockerfile (`agent-py/Dockerfile`).
-
-> Commands below reflect the current LiveKit CLI flow — re-check with `lk docs` /
-> `lk agent --help` before deploying, as the CLI evolves.
-
-```bash
-cd agent-py
-lk agent create        # first deploy: registers the agent, writes livekit.toml,
-                       #   uploads the build context, builds the Dockerfile image,
-                       #   and deploys it. Dispatch name "agent-py" is preserved.
-```
-
-Your agent needs its environment in the cloud too — set `LIVEKIT_*` and `MOSS_PROJECT_ID` /
-`MOSS_PROJECT_KEY` (plus the `MOSS_*` index names) as deployment
-[secrets](https://docs.livekit.io/deploy/agents/secrets/).
-
-Subsequent updates and monitoring:
-
-```bash
-lk agent deploy        # ship a new version
-lk agent status        # status / replica count
-lk agent logs          # live log tail
-```
-
-See [Agent deployment](https://docs.livekit.io/deploy/agents/quickstart/) and
-[Builds & Dockerfiles](https://docs.livekit.io/deploy/agents/builds/) for details.
-
-## Customize
-
-- **Knowledge base** — edit `agent-py/knowledge.json` (each entry is a self-contained Q&A
-  paragraph with `{id, text, metadata}`), then re-run `pnpm moss:index`.
-- **Agent persona / behavior** — edit the instructions and tools in `agent-py/src/agent.py`.
-- **Models** — swap the LiveKit Inference model strings (STT/LLM/TTS) in `agent-py/src/agent.py`.
-- **Branding & visualizer** — edit `frontend/app-config.ts`.
-- **Knowledge Matches UI** — `frontend/components/app/moss-results-panel.tsx` (rendered from
-  `frontend/components/agents-ui/blocks/agent-session-view-01/components/agent-session-block.tsx`).
-
-## Root scripts
+## Root Scripts
 
 | Script | What it does |
 | --- | --- |
-| `pnpm setup` | install frontend + sync agent (`uv`) + copy `.env.local` files |
-| `pnpm moss:index` | build the `knowledge` + `memory` Moss indexes |
-| `pnpm dev` | run agent + frontend together (via `concurrently`) |
-| `pnpm agent:py:console` | terminal smoke test (no frontend) |
-| `pnpm agent:py:start` / `pnpm agent:py:download-files` | prod entry / fetch model assets |
-| `pnpm build` / `pnpm start:frontend` | build / serve the frontend |
-| `pnpm test` / `pnpm lint` / `pnpm format` | tests, lint, format |
+| `pnpm setup` | Install frontend dependencies, sync the Python agent with `uv`, and copy local env files. |
+| `pnpm moss:index` | Build Moss indexes through `agent-py/src/create_index.py`. |
+| `pnpm dev` | Run the Python agent and Next.js frontend together. |
+| `pnpm agent:py:console` | Run the voice agent in terminal console mode. |
+| `pnpm agent:py:api` | Start the optional FastAPI KOL endpoint on port 8000. |
+| `pnpm agent:py:start` | Run the Python agent in production start mode. |
+| `pnpm agent:py:download-files` | Download LiveKit agent model assets. |
+| `pnpm build` | Build the frontend. |
+| `pnpm start:frontend` | Serve the built frontend. |
+| `pnpm test` | Run Python tests. |
+| `pnpm lint` | Run Python and frontend lint commands. |
+| `pnpm format` | Format frontend and Python code. |
 
-## Moss resources
+## Demo Success Criteria
 
-- **LiveKit Integration:** https://docs.moss.dev/docs/integrations/livekit
-- **Portal (get your project ID + key):** https://portal.usemoss.dev
-- **Indexing & retrieval guides:** https://docs.moss.dev/docs
-- **Free tier:** ~**60 voice-minutes/month** and up to **3 indexes** — enough to run this starter
-  end to end (the `knowledge` and `memory` indexes count as 2).
+The demo should prove:
+
+- A Phase 3 protocol can drive expert retrieval.
+- A voice agent can answer nuanced Medical Affairs questions.
+- KOL recommendations are evidence-backed and explainable.
+- Compliance guardrails are visible in the workflow.
+- The experience is more useful than a static KOL list.
+
+Closing line:
+
+> KOL Copilot turns "find the right doctors" into a compliant, explainable, protocol-aware workflow for Medical Affairs and Phase 3 teams.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
