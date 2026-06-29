@@ -1,151 +1,101 @@
 # KOL Copilot
 
-KOL Copilot is a hackathon MVP for a protocol-aware Medical Affairs co-pilot. It helps pharma Medical Affairs and late-stage Clinical Development teams identify, rank, and prepare compliant engagement with relevant KOLs, investigators, sites, and medical experts for Phase 3 and launch-readiness programs.
+<p align="center">
+  <a href="https://www.moss.dev">
+    <img src="https://www.moss.dev/Favicon.svg" alt="Moss logo" height="56" />
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://brightdata.com">
+    <img src="https://brightdata.com/wp-content/themes/brightdata/assets/images/favicon.png" alt="Bright Data logo" height="56" />
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://livekit.io">
+    <img src="./frontend/public/lk-logo.svg" alt="LiveKit logo" height="56" />
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://openai.com">
+    <img src="https://avatars.githubusercontent.com/u/14957082?s=200&amp;v=4" alt="OpenAI logo" height="56" />
+  </a>
+</p>
 
-The product answers:
+KOL Copilot is an example project for showing how [Moss.dev](https://www.moss.dev) works with [Bright Data](https://brightdata.com), [LiveKit](https://livekit.io), and the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) in a realtime agent app.
 
-> Given this clinical trial protocol, who are the most relevant KOLs, investigators, sites, and medical experts, why do they matter, and what compliant action should the Medical Affairs team take next?
+The sample domain is pharma Medical Affairs: given a Phase 3 clinical trial protocol, the app finds relevant external experts, cites the supporting evidence, ranks the experts, and drafts a compliant MSL pre-call brief. The domain is intentionally specific so the retrieval workflow feels concrete, but the main point of the repo is the Moss + Bright Data pattern.
 
-The demo is built around a realtime voice workflow: a user discusses a Phase 3 protocol naturally, the agent retrieves expert evidence, ranks relevant KOLs, streams structured results to the UI, and can draft a compliant MSL pre-call brief.
+## What This Demonstrates
 
-## Demo Workflow
+- **Bright Data for public evidence discovery:** SERP and Unlocker tools help the research agent find and read public sources such as ClinicalTrials.gov, PubMed, congress pages, institutional bios, guideline pages, and transparency records.
+- **Moss for realtime semantic retrieval:** protocol chunks, expert profiles, evidence snippets, ranking metadata, citations, and generated briefs are written into Moss indexes for fast agent retrieval.
+- **OpenAI Agents SDK for orchestration:** the agentic research workflow plans searches, synthesizes evidence, returns structured KOL rankings, and drafts MSL-ready briefs.
+- **A voice-first copilot loop:** LiveKit runs the realtime conversation, while the frontend updates KOL cards, citations, score breakdowns, and compliance notes from agent events.
+- **An evidence-backed UI:** every recommendation is designed to carry a source URL, evidence type, snippet, score rationale, and Medical Affairs compliance note.
+
+## How The Pieces Fit Together
+
+```text
+Protocol PDF
+  -> parsed protocol profile
+  -> OpenAI research agent
+       -> Bright Data SERP for source discovery
+       -> Bright Data Unlocker for public page reads
+  -> structured KOL evidence, rankings, citations, and briefs
+  -> Moss protocol and expert indexes
+  -> LiveKit voice agent retrieves from Moss
+  -> Next.js UI renders ranked cards and citations
+```
+
+Bright Data is used for the research side of the workflow. Moss is used for the semantic retrieval and memory layer that the realtime agent can query quickly during the demo.
+
+## Demo Flow
 
 1. Upload or select a Phase 3 protocol PDF.
-2. Extract protocol attributes such as indication, intervention, phase, patient population, geography, endpoints, inclusion/exclusion criteria, and relevant specialties.
-3. Ask a voice question:
+2. Extract indication, intervention, phase, patient population, endpoints, geography, and relevant specialties.
+3. Run protocol-aware KOL research.
+4. Use Bright Data-backed tools, when configured, to discover public evidence.
+5. Store the resulting protocol assets, KOL profiles, citations, and ranking metadata in Moss.
+6. Ask a voice question such as:
 
    > Find the top infectious disease KOLs for this protocol. Prioritize vaccine trial experience, immunogenicity publications, and adult COVID study relevance.
 
-4. Retrieve relevant expert evidence from protocol chunks, expert profiles, publication snippets, trial records, and supporting sources.
-5. Rank experts with an explainable scoring model.
-6. Display ranked KOL cards with citations, rationale, score breakdowns, and compliance notes.
-7. Ask follow-ups such as:
+7. Watch the UI update with ranked KOL cards, evidence snippets, and compliance-safe next actions.
 
-   > Why is Dr. X ranked above Dr. Y?
-
-8. Generate a compliant MSL pre-call brief with scientific background, source citations, suggested non-promotional questions, and compliance warnings.
-
-## Architecture
-
-![KOL Copilot architecture](./KOLCopilot-Arch.png)
+## Project Structure
 
 ```text
-Frontend
-  - Next.js voice interface
-  - protocol upload and dashboard
-  - live ranked KOL cards
-  - evidence drawer
-  - compliance panel
+frontend/
+  Next.js app, protocol upload, dashboard, LiveKit voice UI
 
-Voice + Agent Runtime
-  - LiveKit realtime audio session
-  - Python LiveKit agent
-  - OpenAI Agents KOL workflow
-  - structured data events for UI updates
+agent-py/
+  Python LiveKit agent, OpenAI research workflow, Bright Data tools,
+  Moss indexing, KOL ranking, MSL brief generation
 
-Backend / Workflow
-  - protocol-aware query runner
-  - retrieval orchestration
-  - expert ranking
-  - compliance checker
-  - MSL brief generator
-  - optional FastAPI endpoint at /kol/query
+Moss indexes
+  protocols, kol_experts, knowledge, memory
 
-Knowledge Base
-  - Moss protocol index
-  - Moss expert index
-  - trial records
-  - publication snippets
-  - payment/transparency snippets
-  - guideline/congress snippets
+Bright Data
+  SERP discovery and Unlocker page reads for public research sources
 ```
 
-The browser connects to LiveKit for realtime audio. LiveKit dispatches the Python agent in `agent-py/`, which can call Moss retrieval tools and the in-process KOL Copilot runner. The runner emits structured `kol_result` data events so the Next.js UI can update ranked cards, citations, and compliance notes without waiting for a static final answer.
-
-## Repository Layout
+## Key Files
 
 ```text
-KOL-Copilot-Hackathon/
-├── KOLCopilot-Arch.png        # architecture diagram referenced above
-├── AGENTS.md                  # product brief and project instructions
-├── agent-py/                  # Python LiveKit voice agent and KOL workflow
-│   ├── src/agent.py           # LiveKit agent, Moss tools, KOL bridge
-│   ├── src/create_index.py    # Moss index creation and seeding
-│   └── src/kol_copilot/       # protocol-aware KOL workflow package
-│       ├── runner.py          # main query runner used by voice and API paths
-│       ├── api.py             # optional FastAPI endpoint
-│       ├── agents.py          # OpenAI Agents definitions
-│       ├── tools.py           # retrieval and workflow tools
-│       └── schemas.py         # structured result models
-├── frontend/                  # Next.js realtime voice and KOL UI
-│   ├── app/                   # app routes, dashboard, token endpoint
-│   ├── components/app/        # app shell, landing, Moss/KOL result panels
-│   └── hooks/                 # LiveKit and Moss data-event hooks
-└── package.json               # root scripts for setup, dev, indexing, tests
+agent-py/src/kol_copilot/analysis.py       # agentic research workflow
+agent-py/src/kol_copilot/web_research.py   # Bright Data SERP and Unlocker tools
+agent-py/src/kol_copilot/moss_indexer.py   # writes structured assets into Moss
+agent-py/src/kol_copilot/tools.py          # KOL retrieval, ranking, compliance, briefs
+agent-py/src/agent.py                      # LiveKit voice agent and Moss retrieval tools
+frontend/app/api/protocols/                # protocol upload and analysis routes
+frontend/components/dashboard/             # protocol pipeline and KOL dashboard UI
 ```
-
-## Core Components
-
-- **LiveKit:** realtime voice conversation, audio transport, agent dispatch, and session infrastructure.
-- **Moss:** semantic retrieval over protocol chunks, expert profiles, publication snippets, clinical trial records, and evidence snippets.
-- **OpenAI Agents SDK:** protocol-aware KOL workflow, ranking rationale, comparison answers, and MSL brief generation.
-- **Next.js frontend:** voice UI, upload/dashboard surface, live KOL cards, evidence context, and compliance panel.
-- **FastAPI optional API:** HTTP access to the same KOL runner at `POST /kol/query`.
-
-## Ranking Model
-
-The MVP uses a simple explainable score so every recommendation can be traced back to evidence:
-
-```text
-KOL Score =
-  30% protocol match
-+ 25% trial investigator experience
-+ 20% publication relevance
-+ 10% institution/site relevance
-+ 10% congress/guideline influence
-+  5% recency
-- compliance/conflict risk adjustments
-```
-
-The weights can be hardcoded for the hackathon. The important requirement is that each score includes visible evidence and citations.
-
-## Compliance Guardrails
-
-KOL Copilot is Medical Affairs software, not sales targeting software.
-
-Do not produce outputs like:
-
-- "This doctor is likely to prescribe."
-- "Target this physician before approval."
-- "Use this KOL to drive commercial adoption."
-
-Prefer language like:
-
-- "This expert is scientifically relevant to the protocol."
-- "This investigator has related trial experience."
-- "This MSL conversation should remain non-promotional."
-- "Suggested questions are for scientific exchange only."
-
-Required guardrails:
-
-- Medical Affairs mode by default.
-- Citation-required recommendations.
-- No pre-approval promotional language.
-- No prescribing-volume targeting.
-- Clear Medical/Commercial firewall.
-- Audit trail for recommendations.
-- Compliance warning section in generated briefs.
 
 ## Prerequisites
 
 - Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 - Node.js 22+ and [pnpm](https://pnpm.io) 10+.
 - [LiveKit CLI](https://docs.livekit.io/reference/developer-tools/livekit-cli/) authenticated to a LiveKit Cloud project.
-- LiveKit Cloud account/project.
-- Moss account and API credentials.
-- Optional `OPENAI_API_KEY` for the OpenAI Agents SDK path. Without it, the KOL runner can fall back to deterministic synthetic evidence for demo rendering.
-
-Never hand-write LiveKit keys. Use the LiveKit CLI to write LiveKit environment values.
+- Moss project credentials.
+- Optional Bright Data API token and zones for live public web research.
+- Optional OpenAI API key for the agentic research path. Without it, the app can still render deterministic demo data.
 
 ## Setup
 
@@ -162,7 +112,7 @@ lk app env -w agent-py
 lk app env -w frontend
 ```
 
-Add Moss and optional OpenAI credentials to `agent-py/.env.local`:
+Add Moss credentials to `agent-py/.env.local`:
 
 ```dotenv
 MOSS_PROJECT_ID=your_moss_project_id
@@ -172,45 +122,50 @@ MOSS_MEMORY_INDEX_NAME=memory
 MOSS_PROTOCOL_INDEX_NAME=protocols
 MOSS_EXPERT_INDEX_NAME=kol_experts
 MOSS_MODEL_ID=moss-minilm
-OPENAI_API_KEY=optional_openai_api_key_for_kol_copilot
 ```
 
-The frontend only needs LiveKit credentials and the agent dispatch name. It does not need Moss credentials.
+To enable Bright Data-backed research, also add:
 
-## Build Indexes
+```dotenv
+BRIGHT_DATA_API_TOKEN=your_bright_data_api_token
+BRIGHT_DATA_SERP_ZONE=your_serp_zone
+BRIGHT_DATA_UNLOCKER_ZONE=your_unlocker_zone
+BRIGHT_DATA_COUNTRY=us
+```
+
+To enable the full OpenAI Agents research path:
+
+```dotenv
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_KOL_MODEL=gpt-5.2
+```
+
+## Build Moss Indexes
 
 ```bash
 pnpm moss:index
 ```
 
-This runs `agent-py/src/create_index.py` and prepares the Moss indexes used by the realtime workflow. The KOL workflow expects protocol and expert evidence to be available in the configured Moss indexes; for hackathon speed, seed a curated dataset around one indication instead of trying to build a full pharma data warehouse.
-
-Recommended seed size:
-
-- 20-40 expert profiles.
-- 50-150 evidence snippets.
-- ClinicalTrials.gov investigator/site records.
-- PubMed abstracts and publication snippets.
-- Guideline, congress, institution, and transparency snippets where useful.
+This seeds the starter `knowledge` and `memory` Moss indexes. The dashboard analysis flow can also write structured protocol and KOL assets into the `protocols` and `kol_experts` indexes through `agent-py/src/kol_copilot/moss_indexer.py`.
 
 ## Run
 
-Start the voice agent and frontend together:
+Start the Python voice agent and the Next.js frontend together:
 
 ```bash
 pnpm dev
 ```
 
 - Frontend: http://localhost:3000
-- Python LiveKit agent: `agent-py`, dispatched by the frontend token route.
+- Python LiveKit agent: `agent-py`
 
-No-frontend terminal smoke test:
+Terminal smoke test:
 
 ```bash
 pnpm agent:py:console
 ```
 
-Optional KOL Copilot HTTP API:
+Optional HTTP API for the KOL runner:
 
 ```bash
 pnpm agent:py:api
@@ -225,61 +180,24 @@ Then POST to `http://localhost:8000/kol/query`:
 }
 ```
 
-The LiveKit worker does not need the HTTP API for voice. It imports `kol_copilot.runner.run_kol_query` directly to keep the realtime path low-latency.
+## Scripts
 
-## Reference Protocol
-
-The initial reference protocol is the Pfizer/BioNTech BNT162b2 Phase 3 COVID-19 vaccine protocol:
-
-- ClinicalTrials.gov document: `https://cdn.clinicaltrials.gov/large-docs/69/NCT04816669/Prot_000.pdf`
-- Trial: Pfizer/BioNTech BNT162b2 COVID-19 vaccine
-- Phase: 3
-- Indication: COVID-19 prevention
-- Intervention: BNT162b2 RNA-based COVID-19 vaccine
-- Population: healthy adults 18-55
-- Focus areas: safety, tolerability, immunogenicity
-- Relevant specialties: infectious disease, vaccinology, immunology, clinical trial investigators
-
-For a more pharma/KOL-friendly demo, a synthetic Phase 3 protocol in oncology, lupus nephritis, obesity, or Alzheimer's disease is also acceptable.
-
-## Test, Lint, Format
-
-```bash
-pnpm test
-pnpm lint
-pnpm format
-```
-
-## Root Scripts
-
-| Script | What it does |
+| Script | Purpose |
 | --- | --- |
-| `pnpm setup` | Install frontend dependencies, sync the Python agent with `uv`, and copy local env files. |
-| `pnpm moss:index` | Build Moss indexes through `agent-py/src/create_index.py`. |
-| `pnpm dev` | Run the Python agent and Next.js frontend together. |
+| `pnpm setup` | Install frontend dependencies, sync the Python agent, and create local env files. |
+| `pnpm dev` | Run the Python LiveKit agent and Next.js frontend together. |
+| `pnpm moss:index` | Seed the starter Moss indexes. |
 | `pnpm agent:py:console` | Run the voice agent in terminal console mode. |
 | `pnpm agent:py:api` | Start the optional FastAPI KOL endpoint on port 8000. |
-| `pnpm agent:py:start` | Run the Python agent in production start mode. |
-| `pnpm agent:py:download-files` | Download LiveKit agent model assets. |
-| `pnpm build` | Build the frontend. |
-| `pnpm start:frontend` | Serve the built frontend. |
 | `pnpm test` | Run Python tests. |
 | `pnpm lint` | Run Python and frontend lint commands. |
 | `pnpm format` | Format frontend and Python code. |
 
-## Demo Success Criteria
+## Demo Notes
 
-The demo should prove:
+The reference protocol is the Pfizer/BioNTech BNT162b2 Phase 3 COVID-19 vaccine protocol in `Prot_000.pdf`. `Tirzepatide Protocol.pdf` is also included for a second protocol-style input.
 
-- A Phase 3 protocol can drive expert retrieval.
-- A voice agent can answer nuanced Medical Affairs questions.
-- KOL recommendations are evidence-backed and explainable.
-- Compliance guardrails are visible in the workflow.
-- The experience is more useful than a static KOL list.
-
-Closing line:
-
-> KOL Copilot turns "find the right doctors" into a compliant, explainable, protocol-aware workflow for Medical Affairs and Phase 3 teams.
+KOL Copilot is framed as Medical Affairs software. The example avoids prescribing-volume targeting, sales language, and pre-approval promotional claims. Suggested actions should stay scientific, citation-backed, and non-promotional.
 
 ## License
 
